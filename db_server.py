@@ -98,7 +98,7 @@ def process_request(request_data: dict) -> dict:
                 if username in users:
                     return {"status": "error", "reason": "user_exists"} 
                 
-                users[username] = {"password": password}
+                users[username] = {"password": password, "status": "offline"}
                 save_db(USER_DB_FILE, users)
                 logging.info(f"Registered new user: {username}")
                 return {"status": "ok"}
@@ -143,6 +143,24 @@ def process_request(request_data: dict) -> dict:
                 user_logs = [log for log in logs if user_id in log.get('users', [])]
                 return {"status": "ok", "logs": user_logs}
 
+            elif action == "update": # For setting status
+                username = data.get('username')
+                new_status = data.get('status')
+                
+                if not username or not new_status:
+                    return {"status": "error", "reason": "missing_fields_for_update"}
+                
+                if username not in users:
+                    return {"status": "error", "reason": "user_not_found"}
+                
+                # Update the user's status in memory
+                users[username]['status'] = new_status
+                
+                # Save the change back to the file
+                save_db(USER_DB_FILE, users)
+                logging.info(f"Updated status for {username} to {new_status}")
+                return {"status": "ok"}
+                
             else:
                 return {"status": "error", "reason": f"Unknown action '{action}' for GameLog"}
 
