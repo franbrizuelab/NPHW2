@@ -151,7 +151,7 @@ def network_thread_func(sock: socket.socket):
 
 def send_input_to_server(action: str):
     """Sends a player action to the game server."""
-    global g_server_socket
+    global g_server_socket, g_running
     if g_server_socket is None or not g_running:
         return
         
@@ -166,7 +166,6 @@ def send_input_to_server(action: str):
         
     except socket.error as e:
         logging.warning(f"Failed to send input '{action}': {e}")
-        global g_running
         g_running = False # Stop the game if we can't send data
 
 # Drawing Functions
