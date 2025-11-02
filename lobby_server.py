@@ -76,6 +76,21 @@ def forward_to_db(request: dict) -> dict | None:
         logging.error(f"Failed to decode DB server response: {e}")
         return {"status": "error", "reason": "db_server_bad_response"}
 
+def find_free_port(start_port: int) -> int:
+    """Finds an available TCP port, starting from start_port."""
+    port = start_port
+    while port < 65535:
+        try:
+            # Try to bind to the port
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(('', port))
+                # If bind succeeds, the port is free
+                return port
+        except OSError:
+            # Port is already in use
+            port += 1
+    raise RuntimeError("Could not find a free port.")
+
 # Client Helper Function
 
 def send_to_client(client_sock: socket.socket, response: dict):
@@ -323,7 +338,9 @@ def handle_client(client_sock: socket.socket, addr: tuple):
                 elif action == 'create_room':
                     handle_create_room(client_sock, username, data)
                 
-                # (TODO: Add 'join_room', 'invite', 'start_game')
+                elif action == 'start_game':
+                    handle_start_game(client_sock, username)
+                # (TODO: Add 'join_room', 'invite')
                 
                 else:
                     send_to_client(client_sock, {"status": "error", "reason": f"unknown_action: {action}"})
@@ -341,6 +358,81 @@ def handle_client(client_sock: socket.socket, addr: tuple):
             client_sock.close()
             
         logging.info(f"Connection closed for {addr} (user: {username})")
+
+def handle_start_game(client_sock: socket.socket, username: str):
+    """
+    Handles 'start_game' action.
+    - User must be the host of a full room.
+    - Launches a new game_server.py process.
+    - Notifies both players of the game server's address.
+    """
+    global g_room_lock, g_rooms, g_client_sessions
+    
+    room_id = None
+    with g_session_lock:
+        status = g_client_sessions.get(username, {}).get("status", "")
+        if status.startswith("in_room_"):
+            room_id = int(status.split('_')[-1])
+            
+    if room_id is None:
+        send_to_client(client_sock, {"status": "error", "reason": "not_in_a_room"})
+        return
+
+    with g_room_lock:
+        room = g_rooms.get(room_id)
+        if room is None:
+            send_to_client(client_sock, {"status": "error", "reason": "room_not_found"})
+            return
+            
+        if room["host"] != username:
+            send_to_client(client_sock, {"status": "error", "reason": "not_room_host"})
+            return
+            
+        if len(room["players"]) != 2:
+            send_to_client(client_sock, {"status": "error", "reason": "room_not_full"})
+            return
+            
+        # --- All checks passed, start the game ---
+        try:
+            # 1. Find a free port
+            game_port = find_free_port(config.GAME_SERVER_START_PORT)
+            
+            # 2. Launch the game_server.py process
+            # (Assumes game_server.py is in the same directory)
+            command = [
+                "python3", 
+                "game_server.py", 
+                "--port", str(game_port)
+            ]
+            subprocess.Popen(command)
+            
+            logging.info(f"Launched GameServer for room {room_id} on port {game_port}")
+            
+            # 3. Notify both players
+            game_info_msg = {
+                "type": "GAME_START",
+                "host": config.LOBBY_HOST, # The IP to connect to
+                "port": game_port
+            }
+            
+            player1_name = room["players"][0]
+            player2_name = room["players"][1]
+            
+            with g_session_lock:
+                p1_sock = g_client_sessions.get(player1_name, {}).get("sock")
+                p2_sock = g_client_sessions.get(player2_name, {}).get("sock")
+                
+                if p1_sock:
+                    send_to_client(p1_sock, game_info_msg)
+                if p2_sock:
+                    send_to_client(p2_sock, game_info_msg)
+            
+            # 4. Update room status
+            room["status"] = "playing"
+            
+        except Exception as e:
+            logging.error(f"Failed to start game for room {room_id}: {e}")
+            send_to_client(client_sock, {"status": "error", "reason": "server_failed_to_start_game"})
 
 # Main Server Loop
 

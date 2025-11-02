@@ -88,7 +88,7 @@ def main():
     # 1. Connect to Lobby
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.connect((config.DB_HOST, config.LOBBY_PORT)) # DB_HOST is '127.0.0.1'
+        sock.connect((config.LOBBY_HOST, config.LOBBY_PORT)) # DB_HOST is '127.0.0.1'
         g_lobby_socket = sock
         print(f"Connected to Lobby at {config.DB_HOST}:{config.LOBBY_PORT}")
     except socket.error as e:
