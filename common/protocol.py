@@ -64,7 +64,7 @@ def send_msg(sock: socket.socket, message_bytes: bytes):
     length = len(message_bytes)
 
     # 1. Check message size against the limit 
-    # if length > MAX_MSG_SIZE:
+    if length > MAX_MSG_SIZE:
         raise ValueError(f"Message size ({length} bytes) exceeds limit ({MAX_MSG_SIZE} bytes)")
 
     # 2. Pack the length into a 4-byte header 
