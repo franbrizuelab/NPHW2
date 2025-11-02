@@ -13,20 +13,15 @@ import os
 import time
 import logging
 
-# globals 
-g_server_socket = None
-g_running = True # Global flag to stop threads
-g_my_role = None # Will be "P1" or "P2"
 
-# Add project root to path
-# This allows us to import from the 'common' folder
+# import from the 'common' folder
 try:
     current_dir = os.path.dirname(os.path.abspath(__file__))
     parent_dir = os.path.dirname(current_dir)
     if parent_dir not in sys.path:
         sys.path.insert(0, parent_dir)
     from common import protocol
-    # We will import config, but override server details for now
+    # import config, but override server details for now
     from common import config 
 except ImportError:
     print("Error: Could not import common/protocol.py or common/config.py.")
