@@ -154,10 +154,7 @@ def handle_login(client_sock: socket.socket, addr: tuple, data: dict) -> str | N
         db_status_update_req = {
             "collection": "User",
             "action": "update",
-            "data": {
-                "username": username,
-                "status": "online"
-            }
+            "data": {"username": username,"status": "online"}
         }
         db_status_response = forward_to_db(db_status_update_req)
         if not db_status_response or db_status_response.get("status") != "ok":
