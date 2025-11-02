@@ -1,22 +1,15 @@
-# File: common/protocol.py
-#
-# This file implements the "Length-Prefixed Framing Protocol"
-#
-# All TCP communication must use this protocol to solve "sticky packet"
-# and "fragmentation" issues[cite: 139].
-#
+# Implements the "Length-Prefixed Framing Protocol"
 # Protocol Format:
 # [ 4-byte Header ] [ N-byte Body ]
-#
 # - Header: A 4-byte unsigned integer ('!I') in network byte order
-#             (big-endian), specifying the length of the body[cite: 152, 153].
+#             (big-endian), specifying the length of the body.
 # - Body: N bytes of data (e.g., a UTF-8 encoded JSON string).
 
 import socket
 import struct
 import logging
 
-# --- Constants ---
+# Constants
 
 # Header is 4 bytes, unsigned int, network byte order 
 HEADER_FORMAT = '!I'
@@ -28,7 +21,7 @@ MAX_MSG_SIZE = 65536
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(message)s')
 
-# --- Private Helper Function ---
+# Private Helper Function
 
 def _recv_all(sock: socket.socket, length: int) -> bytes | None:
     """
@@ -56,7 +49,7 @@ def _recv_all(sock: socket.socket, length: int) -> bytes | None:
     # Join all chunks to form the complete message
     return b''.join(chunks)
 
-# --- Public API Functions ---
+# Public API Functions
 
 def send_msg(sock: socket.socket, message_bytes: bytes):
     """

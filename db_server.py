@@ -1,13 +1,11 @@
-# File: db_server.py
+# Standalone Mock Database Server.
 #
-# This is the standalone Mock Database Server.
-#
-# - It's a TCP server that listens on a dedicated port.
-# - It uses the Length-Prefixed Framing Protocol from common.protocol.
-# - All requests and responses are JSON strings.
-# - It persists data to local JSON files (simulating a DB) .
-# - It uses threading to handle multiple concurrent clients.
-# - It uses a lock to ensure file writes are thread-safe.
+# TCP server that listens on a dedicated port.
+# Uses the Length-Prefixed Framing Protocol from common.protocol.
+# All requests and responses are JSON strings.
+# Persists data to local JSON files (simulating a DB) .
+# Uses threading to handle multiple concurrent clients.
+# Uses a lock to ensure file writes are thread-safe.
 
 import socket
 import threading
@@ -24,7 +22,7 @@ except ImportError:
     print("Ensure 'common/protocol.py' exists and is in your Python path.")
     sys.exit(1)
 
-# --- Server Configuration ---
+# Server Configuration
 DB_HOST = '0.0.0.0'
 DB_PORT = 10001  # Port >= 10000 
 STORAGE_DIR = 'storage'
@@ -37,7 +35,7 @@ db_lock = threading.Lock()
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='[DB_SERVER] %(asctime)s - %(message)s')
 
-# --- Database Helper Functions ---
+# Database Helper Functions
 
 def setup_storage():
     """Ensures the storage directory and initial DB files exist."""
@@ -78,13 +76,10 @@ def save_db(filepath: str, data: dict | list):
         except IOError as e:
             logging.error(f"Error saving DB file '{filepath}': {e}")
 
-# --- Request Processing Logic ---
+# Request Processing Logic
 
 def process_request(request_data: dict) -> dict:
-    """
-    Main logic to handle a parsed JSON request.
-    This fulfills the API spec: {"collection": "...", "action": "...", "data": ...} ]
-    """
+    # Main logic to handle a parsed JSON request.
     try:
         collection = request_data['collection']
         action = request_data['action']
@@ -103,7 +98,6 @@ def process_request(request_data: dict) -> dict:
                 if username in users:
                     return {"status": "error", "reason": "user_exists"} 
                 
-                # In a real app, hash the password!
                 users[username] = {"password": password}
                 save_db(USER_DB_FILE, users)
                 logging.info(f"Registered new user: {username}")
@@ -141,7 +135,7 @@ def process_request(request_data: dict) -> dict:
                 return {"status": "ok"}
 
             elif action == "query": # Get game logs (e.g., for a user)
-                # This is just an example. You can make queries more complex.
+                # TODO: add more complex queries
                 user_id = data.get('userId')
                 if not user_id:
                     return {"status": "ok", "logs": logs} # Return all logs
@@ -163,7 +157,7 @@ def process_request(request_data: dict) -> dict:
         return {"status": "error", "reason": "internal_server_error"}
 
 
-# --- Client Handling Thread ---
+# Client Handling Thread
 
 def handle_client(client_socket: socket.socket, addr: tuple):
     """
@@ -214,7 +208,7 @@ def handle_client(client_socket: socket.socket, addr: tuple):
         client_socket.close()
         logging.info(f"Connection closed for {addr}")
 
-# --- Main Server Loop ---
+# Main Server Loop
 
 def main():
     """Starts the DB server."""
@@ -240,7 +234,7 @@ def main():
                 client_socket, addr = server_socket.accept()
                 
                 # Create and start a new thread to handle this client
-                # This allows the server to handle multiple clients at once
+                # Allows server to handle multiple clients at once
                 client_thread = threading.Thread(
                     target=handle_client, 
                     args=(client_socket, addr)
