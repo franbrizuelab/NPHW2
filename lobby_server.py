@@ -151,10 +151,21 @@ def handle_login(client_sock: socket.socket, addr: tuple, data: dict) -> str | N
                 "status": "online"
             }
         
+        db_status_update_req = {
+            "collection": "User",
+            "action": "update",
+            "data": {
+                "username": username,
+                "status": "online"
+            }
+        }
+        db_status_response = forward_to_db(db_status_update_req)
+        if not db_status_response or db_status_response.get("status") != "ok":
+            # Log a warning, but don't fail the login
+            logging.warning(f"Failed to update 'online' status in DB for {username}.")
+
         # Send success to client
         send_to_client(client_sock, {"status": "ok", "reason": "login_successful"})
-        
-        # (TODO: Send 'online' status update to DB Server)
         
         return username
     else:
