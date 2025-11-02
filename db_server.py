@@ -16,6 +16,7 @@ import logging
 
 # Import our new protocol functions
 try:
+    from common import config
     from common.protocol import send_msg, recv_msg
 except ImportError:
     print("Error: Could not import protocol.py.")
@@ -23,8 +24,8 @@ except ImportError:
     sys.exit(1)
 
 # Server Configuration
-DB_HOST = '0.0.0.0'
-DB_PORT = 10001  # Port >= 10000 
+DB_HOST = config.DB_HOST
+DB_PORT = config.DB_PORT
 STORAGE_DIR = 'storage'
 USER_DB_FILE = os.path.join(STORAGE_DIR, 'users.json')
 GAMELOG_DB_FILE = os.path.join(STORAGE_DIR, 'gamelogs.json')
@@ -160,7 +161,7 @@ def process_request(request_data: dict) -> dict:
                 save_db(USER_DB_FILE, users)
                 logging.info(f"Updated status for {username} to {new_status}")
                 return {"status": "ok"}
-                
+
             else:
                 return {"status": "error", "reason": f"Unknown action '{action}' for GameLog"}
 

@@ -4,8 +4,8 @@ LOBBY_PORT = 10000
 
 # --- DB Server ---
 # The Lobby will connect to this address.
-DB_HOST = '127.0.0.1' 
-DB_PORT = 10001
+DB_HOST = '140.113.17.11' 
+DB_PORT = 10002
 
 # --- Game Server ---
 # The first port to try for new game servers.

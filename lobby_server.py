@@ -16,6 +16,7 @@ import subprocess # Will be needed later for launching game_server.py
 
 # Import our protocol library
 try:
+    from common import config
     from common.protocol import send_msg, recv_msg
 except ImportError:
     print("Error: Could not import protocol.py.")
