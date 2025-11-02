@@ -188,7 +188,17 @@ def handle_logout(username: str):
     if session:
         logging.info(f"User '{username}' logged out.")
         
-        # (TODO: Send 'offline' status update to DB Server)
+        db_status_update_req = {
+            "collection": "User",
+            "action": "update",
+            "data": {
+                "username": username,
+                "status": "offline"
+            }
+        }
+        db_status_response = forward_to_db(db_status_update_req)
+        if not db_status_response or db_status_response.get("status") != "ok":
+            logging.warning(f"Failed to update 'offline' status in DB for {username}.")
         # (TODO: Remove user from any room they were in)
         
         # Send final confirmation and close socket
