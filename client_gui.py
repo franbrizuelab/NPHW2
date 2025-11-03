@@ -227,7 +227,6 @@ def lobby_network_thread(host: str, port: int):
     
     sock = None
     try:
-        # --- NEW CONNECTION LOGIC ---
         try:
             logging.info(f"Connecting to lobby server at {host}:{port}...")
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -254,13 +253,16 @@ def lobby_network_thread(host: str, port: int):
 
             if exceptional:
                 logging.error("Lobby socket exception.")
+                g_running = False
                 break
 
             # 2a. Check for messages to RECEIVE
             if sock in readable:
                 data_bytes = protocol.recv_msg(sock)
                 if data_bytes is None:
-                    if g_running: logging.warning("Lobby server disconnected.")
+                    if g_running: 
+                        logging.warning("Lobby server disconnected.")
+                        g_running = False
                     break
                 
                 msg = json.loads(data_bytes.decode('utf-8'))
@@ -370,11 +372,15 @@ def lobby_network_thread(host: str, port: int):
                 last_refresh_time = current_time
             
     except (socket.error, json.JSONDecodeError, UnicodeDecodeError) as e:
-        if g_running: logging.error(f"Error in lobby network thread: {e}")
+        if g_running: 
+            logging.error(f"Error in lobby network thread: {e}")
+            g_running = False
     except Exception as e:
-        if g_running: logging.error(f"Unexpected lobby network thread error: {e}", exc_info=True)
-            
-    g_running = False # If the loop breaks, stop the app
+        if g_running: 
+            logging.error(f"Unexpected lobby network thread error: {e}", exc_info=True)
+            g_running = False
+           
+     # g_running = False # If the loop breaks, stop the app
     if g_client_state != "GAME":
         logging.info("Lobby network thread exiting.")
     # If state is GAME, the game thread is now in control

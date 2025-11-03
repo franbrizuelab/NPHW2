@@ -12,7 +12,7 @@ import sys
 import logging
 import os
 import time
-import subprocess # Will be needed later for launching game_server.py
+import subprocess 
 
 # Import our protocol library
 try:
@@ -383,6 +383,94 @@ def handle_join_room(client_sock: socket.socket, username: str, data: dict):
             if player_session:
                 send_to_client(player_session["sock"], room_update_msg)
 
+def handle_start_game(client_sock: socket.socket, username: str):
+    """
+    Handles 'start_game' action.
+    - User must be the host of a full room.
+    - Launches a new game_server.py process.
+    - Notifies both players of the game server's address.
+    """
+    global g_room_lock, g_rooms, g_client_sessions
+    
+    room_id = None
+    player1_name = None
+    player2_name = None
+    p1_sock = None
+    p2_sock = None
+    
+    # 1. Lock g_session_lock *first* to check user status
+    with g_session_lock:
+        status = g_client_sessions.get(username, {}).get("status", "")
+        if status.startswith("in_room_"):
+            try:
+                room_id = int(status.split('_')[-1])
+            except (ValueError, IndexError): pass
+        
+        if room_id is None:
+            send_to_client(client_sock, {"status": "error", "reason": "not_in_a_room"})
+            return
+
+        # 2. Lock g_room_lock to check room status
+        with g_room_lock:
+            room = g_rooms.get(room_id)
+            if room is None:
+                send_to_client(client_sock, {"status": "error", "reason": "room_not_found"})
+                return
+            if room["host"] != username:
+                send_to_client(client_sock, {"status": "error", "reason": "not_room_host"})
+                return
+            if len(room["players"]) != 2:
+                send_to_client(client_sock, {"status": "error", "reason": "room_not_full"})
+                return
+            
+            # --- ATOMIC STATE CHANGE ---
+            # All checks passed. Set status to "playing" immediately.
+            room["status"] = "playing"
+            
+            player1_name = room["players"][0]
+            player2_name = room["players"][1]
+            
+            # Update both players' session status
+            p1_session = g_client_sessions.get(player1_name)
+            p2_session = g_client_sessions.get(player2_name)
+            
+            if p1_session: 
+                p1_session["status"] = "playing"
+                p1_sock = p1_session["sock"]
+            if p2_session:
+                p2_session["status"] = "playing"
+                p2_sock = p2_session["sock"]
+            # --- END OF STATE CHANGE ---
+    
+    # 3. All locks are released. Now launch the game and notify.
+    try:
+        game_port = find_free_port(config.GAME_SERVER_START_PORT)
+        
+        command = [
+            "python3", "game_server.py", 
+            "--port", str(game_port),
+            "--p1", player1_name,
+            "--p2", player2_name
+        ]
+        subprocess.Popen(command)
+        
+        logging.info(f"Launched GameServer for {player1_name} and {player2_name} on port {game_port}")
+        
+        time.sleep(0.5) # Sleep before telling clients
+
+        game_info_msg = {
+            "type": "GAME_START",
+            "host": config.LOBBY_HOST,
+            "port": game_port
+        }
+        
+        # Notify both players
+        if p1_sock: send_to_client(p1_sock, game_info_msg)
+        if p2_sock: send_to_client(p2_sock, game_info_msg)
+            
+    except Exception as e:
+        logging.error(f"Failed to start game for room {room_id}: {e}")
+        # (TODO: Rollback state to "idle" if this fails)
 
 def handle_invite(client_sock: socket.socket, inviter_username: str, data: dict):
     """Handles 'invite' action."""
@@ -525,92 +613,6 @@ def handle_client(client_sock: socket.socket, addr: tuple):
             
         logging.info(f"Connection closed for {addr} (user: {username})")
 
-def handle_start_game(client_sock: socket.socket, username: str):
-    """
-    Handles 'start_game' action.
-    - User must be the host of a full room.
-    - Launches a new game_server.py process.
-    - Notifies both players of the game server's address.
-    """
-    global g_room_lock, g_rooms, g_client_sessions
-    
-    room_id = None
-    player1_name = None
-    player2_name = None
-    p1_sock = None
-    p2_sock = None
-    
-    # 1. Lock g_session_lock *first* to check user status
-    with g_session_lock:
-        status = g_client_sessions.get(username, {}).get("status", "")
-        if status.startswith("in_room_"):
-            try:
-                room_id = int(status.split('_')[-1])
-            except (ValueError, IndexError): pass
-        
-        if room_id is None:
-            send_to_client(client_sock, {"status": "error", "reason": "not_in_a_room"})
-            return
-
-        # 2. Lock g_room_lock to check room status
-        with g_room_lock:
-            room = g_rooms.get(room_id)
-            if room is None:
-                send_to_client(client_sock, {"status": "error", "reason": "room_not_found"})
-                return
-            if room["host"] != username:
-                send_to_client(client_sock, {"status": "error", "reason": "not_room_host"})
-                return
-            if len(room["players"]) != 2:
-                send_to_client(client_sock, {"status": "error", "reason": "room_not_full"})
-                return
-            
-            # --- ATOMIC STATE CHANGE ---
-            # All checks passed. Set status to "playing" immediately.
-            room["status"] = "playing"
-            
-            player1_name = room["players"][0]
-            player2_name = room["players"][1]
-            
-            # Update both players' session status
-            p1_session = g_client_sessions.get(player1_name)
-            p2_session = g_client_sessions.get(player2_name)
-            
-            if p1_session: 
-                p1_session["status"] = "playing"
-                p1_sock = p1_session["sock"]
-            if p2_session:
-                p2_session["status"] = "playing"
-                p2_sock = p2_session["sock"]
-            # --- END OF STATE CHANGE ---
-    
-    # 3. All locks are released. Now launch the game and notify.
-    try:
-        game_port = find_free_port(config.GAME_SERVER_START_PORT)
-        
-        command = [
-            "python3", "game_server.py", 
-            "--port", str(game_port),
-            "--p1", player1_name,
-            "--p2", player2_name
-        ]
-        subprocess.Popen(command)
-        
-        logging.info(f"Launched GameServer for {player1_name} and {player2_name} on port {game_port}")
-        
-        game_info_msg = {
-            "type": "GAME_START",
-            "host": config.LOBBY_HOST,
-            "port": game_port
-        }
-        
-        # Notify both players
-        if p1_sock: send_to_client(p1_sock, game_info_msg)
-        if p2_sock: send_to_client(p2_sock, game_info_msg)
-            
-    except Exception as e:
-        logging.error(f"Failed to start game for room {room_id}: {e}")
-        # (TODO: Rollback state to "idle" if this fails)
 
 # Main Server Loop
 
