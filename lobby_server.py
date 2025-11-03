@@ -195,74 +195,60 @@ def handle_logout(username: str):
     if not username:
         return
 
+    session_status = ""
+    session_sock = None
+
     with g_session_lock:
         session = g_client_sessions.pop(username, None)
+        if session:
+            session_status = session.get("status", "online")
+            session_sock = session.get("sock")
     
     if session:
         logging.info(f"User '{username}' logged out.")
         
+        # --- NEW LOGIC ---
+        # 1. Update DB status
         db_status_update_req = {
-            "collection": "User",
-            "action": "update",
-            "data": {
-                "username": username,
-                "status": "offline"
-            }
+            "collection": "User", "action": "update",
+            "data": {"username": username, "status": "offline"}
         }
         db_status_response = forward_to_db(db_status_update_req)
         if not db_status_response or db_status_response.get("status") != "ok":
             logging.warning(f"Failed to update 'offline' status in DB for {username}.")
-        
-        # Remove user from any room they were in
-        room_to_update = None
-        new_host = None
-        
-        # 1. Find the room the user is in from their session status
-        room_id_str = session.get("status", "online")
-        if room_id_str.startswith("in_room_"):
+
+        # 2. Check if user was in an "idle" room
+        if session_status.startswith("in_room_"):
             try:
-                room_id = int(room_id_str.split('_')[-1])
-                
+                room_id = int(session_status.split('_')[-1])
                 with g_room_lock:
                     room = g_rooms.get(room_id)
                     if room:
-                        # 2. Remove user from room
-                        if username in room["players"]:
-                            room["players"].remove(username)
-                            logging.info(f"Removed {username} from room {room_id}.")
+                        # Only clean up if the room was IDLE.
+                        # If "playing", the game server is in charge.
+                        if room["status"] == "idle":
+                            if username in room["players"]:
+                                room["players"].remove(username)
+                            
+                            if not room["players"]:
+                                del g_rooms[room_id]
+                                logging.info(f"Room {room_id} is empty, deleting.")
+                            elif room["host"] == username:
+                                room["host"] = room["players"][0]
+                                new_host = room["host"]
+                                logging.info(f"Host {username} left idle room, promoting {new_host}.")
+                                # (We could notify the new host here)
                         
-                        # 3. Handle room state change
-                        if not room["players"]:
-                            # Room is empty, delete it
-                            del g_rooms[room_id]
-                            logging.info(f"Room {room_id} is empty, deleting.")
-                        elif room["host"] == username:
-                            # User was host, promote new host (the next player in list)
-                            room["host"] = room["players"][0]
-                            new_host = room["host"]
-                            room_to_update = room_id
-                            logging.info(f"Host {username} left, promoting {new_host} in room {room_id}.")
             except (ValueError, IndexError):
-                logging.warning(f"Could not parse room ID from status: {room_id_str}")
-
-        # 4. Notify new host (if one was promoted)
-        # This is done outside the g_room_lock to avoid deadlocks
-        if room_to_update and new_host:
-            with g_session_lock:
-                new_host_session = g_client_sessions.get(new_host)
-                if new_host_session:
-                    send_to_client(new_host_session["sock"], {
-                        "type": "PROMOTED_TO_HOST",
-                        "room_id": room_to_update
-                    })
-        # End of room removal logic
+                logging.warning(f"Could not parse room ID from status: {session_status}")
         
-        # Send final confirmation and close socket
-        try:
-            send_to_client(session["sock"], {"status": "ok", "reason": "logout_successful"})
-            session["sock"].close()
-        except Exception as e:
-            logging.warning(f"Error during final logout send for {username}: {e}")
+        # 3. Send final confirmation
+        if session_sock:
+            try:
+                send_to_client(session_sock, {"status": "ok", "reason": "logout_successful"})
+                session_sock.close()
+            except Exception as e:
+                logging.warning(f"Error during final logout send for {username}: {e}")
 
 def handle_list_rooms(client_sock: socket.socket):
     """Handles 'list_rooms' action."""
@@ -549,77 +535,82 @@ def handle_start_game(client_sock: socket.socket, username: str):
     global g_room_lock, g_rooms, g_client_sessions
     
     room_id = None
+    player1_name = None
+    player2_name = None
+    p1_sock = None
+    p2_sock = None
+    
+    # 1. Lock g_session_lock *first* to check user status
     with g_session_lock:
         status = g_client_sessions.get(username, {}).get("status", "")
         if status.startswith("in_room_"):
             try:
                 room_id = int(status.split('_')[-1])
-            except (ValueError, IndexError):
-                pass
-            
-    if room_id is None:
-        send_to_client(client_sock, {"status": "error", "reason": "not_in_a_room"})
-        return
+            except (ValueError, IndexError): pass
+        
+        if room_id is None:
+            send_to_client(client_sock, {"status": "error", "reason": "not_in_a_room"})
+            return
 
-    with g_room_lock:
-        room = g_rooms.get(room_id)
-        if room is None:
-            send_to_client(client_sock, {"status": "error", "reason": "room_not_found"})
-            return
+        # 2. Lock g_room_lock to check room status
+        with g_room_lock:
+            room = g_rooms.get(room_id)
+            if room is None:
+                send_to_client(client_sock, {"status": "error", "reason": "room_not_found"})
+                return
+            if room["host"] != username:
+                send_to_client(client_sock, {"status": "error", "reason": "not_room_host"})
+                return
+            if len(room["players"]) != 2:
+                send_to_client(client_sock, {"status": "error", "reason": "room_not_full"})
+                return
             
-        if room["host"] != username:
-            send_to_client(client_sock, {"status": "error", "reason": "not_room_host"})
-            return
+            # --- ATOMIC STATE CHANGE ---
+            # All checks passed. Set status to "playing" immediately.
+            room["status"] = "playing"
             
-        if len(room["players"]) != 2:
-            send_to_client(client_sock, {"status": "error", "reason": "room_not_full"})
-            return
-            
-        # --- All checks passed, start the game ---
-        try:
-            # 1. Find a free port
-            game_port = find_free_port(config.GAME_SERVER_START_PORT)
-            
-            # --- THIS IS THE CORRECTED PART ---
-            # 2. Get player names and launch the process
             player1_name = room["players"][0]
             player2_name = room["players"][1]
             
-            command = [
-                "python3", 
-                "game_server.py", 
-                "--port", str(game_port),
-                "--p1", player1_name,  # Pass P1 username
-                "--p2", player2_name   # Pass P2 username
-            ]
-            subprocess.Popen(command)
+            # Update both players' session status
+            p1_session = g_client_sessions.get(player1_name)
+            p2_session = g_client_sessions.get(player2_name)
             
-            # This log message is updated
-            logging.info(f"Launched GameServer for {player1_name} and {player2_name} on port {game_port}")
-            # --- END OF FIX ---
+            if p1_session: 
+                p1_session["status"] = "playing"
+                p1_sock = p1_session["sock"]
+            if p2_session:
+                p2_session["status"] = "playing"
+                p2_sock = p2_session["sock"]
+            # --- END OF STATE CHANGE ---
+    
+    # 3. All locks are released. Now launch the game and notify.
+    try:
+        game_port = find_free_port(config.GAME_SERVER_START_PORT)
+        
+        command = [
+            "python3", "game_server.py", 
+            "--port", str(game_port),
+            "--p1", player1_name,
+            "--p2", player2_name
+        ]
+        subprocess.Popen(command)
+        
+        logging.info(f"Launched GameServer for {player1_name} and {player2_name} on port {game_port}")
+        
+        game_info_msg = {
+            "type": "GAME_START",
+            "host": config.LOBBY_HOST,
+            "port": game_port
+        }
+        
+        # Notify both players
+        if p1_sock: send_to_client(p1_sock, game_info_msg)
+        if p2_sock: send_to_client(p2_sock, game_info_msg)
             
-            # 3. Notify both players
-            game_info_msg = {
-                "type": "GAME_START",
-                "host": config.LOBBY_HOST, # The IP to connect to
-                "port": game_port
-            }
-            
-            with g_session_lock:
-                p1_sock = g_client_sessions.get(player1_name, {}).get("sock")
-                p2_sock = g_client_sessions.get(player2_name, {}).get("sock")
-                
-                if p1_sock:
-                    send_to_client(p1_sock, game_info_msg)
-                if p2_sock:
-                    send_to_client(p2_sock, game_info_msg)
-            
-            # 4. Update room status
-            room["status"] = "playing"
-            
-        except Exception as e:
-            logging.error(f"Failed to start game for room {room_id}: {e}")
-            send_to_client(client_sock, {"status": "error", "reason": "server_failed_to_start_game"})
+    except Exception as e:
+        logging.error(f"Failed to start game for room {room_id}: {e}")
+        # (TODO: Rollback state to "idle" if this fails)
 
 # Main Server Loop
 
