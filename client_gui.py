@@ -104,6 +104,7 @@ g_last_game_state = None
 g_state_lock = threading.Lock()
 g_server_socket = None
 g_running = True # Global flag to stop threads
+g_game_over_results = None
 
 # Network Functions
 
@@ -113,7 +114,7 @@ def network_thread_func(sock: socket.socket):
     Continuously receives messages from the server.
     Updates the global game state.
     """
-    global g_last_game_state, g_running
+    global g_last_game_state, g_running, g_game_over_results
     logging.info("Network thread started.")
     
     while g_running:
@@ -135,7 +136,11 @@ def network_thread_func(sock: socket.socket):
                 with g_state_lock:
                     g_last_game_state = snapshot
             
-            # (TODO) Handle other messages like "GAME_OVER", "CHAT", etc.)
+            elif msg_type == "GAME_OVER":
+                logging.info(f"Game over! Results: {snapshot}")
+                with g_state_lock:
+                    g_game_over_results = snapshot
+                # continue to render the final results.
 
         except (socket.error, json.JSONDecodeError, UnicodeDecodeError) as e:
             if g_running:
@@ -348,8 +353,22 @@ def draw_game_state(surface, font_name, state):
             pygame.draw.rect(surface, colors["GRID_LINES"], rect, 1)
 
     # 9. Draw Game Over
-    # Use my_state
-    if my_state.get("game_over", False):
+
+    # Check for final results first
+    final_results = None
+    with g_state_lock:
+        if g_game_over_results:
+            final_results = g_game_over_results
+
+    if final_results:
+        winner_text = f"WINNER: {final_results.get('winner', 'Unknown')}"
+        draw_text(
+            surface, winner_text,
+            pos["GAME_OVER_TEXT"][0], pos["GAME_OVER_TEXT"][1],
+            font_name, fonts["GAME_OVER_SIZE"], colors["GAME_OVER"]
+        )
+    elif my_state.get("game_over", False):
+        # Fallback if we only know we lost, but not the final result
         draw_text(
             surface, "GAME OVER",
             pos["GAME_OVER_TEXT"][0], pos["GAME_OVER_TEXT"][1],
@@ -359,7 +378,7 @@ def draw_game_state(surface, font_name, state):
 # Main Function
 
 def main():
-    global g_server_socket, g_running, g_last_game_state, g_my_role # Added g_my_role
+    global g_server_socket, g_running, g_last_game_state, g_my_role 
     
     # 1. Initialize Pygame
     pygame.init()
@@ -424,12 +443,17 @@ def main():
     # 5. Main Game Loop
     while g_running:
         
-        # ... (Handle Input Events - NO CHANGE NEEDED) ...
+        # Handle Input Events  
+
+        is_game_over = False
+        with g_state_lock:
+            is_game_over = (g_game_over_results is not None)
+        
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 g_running = False
             
-            if event.type == pygame.KEYDOWN:
+            if event.type == pygame.KEYDOWN and not is_game_over:
                 if event.key == pygame.K_LEFT:
                     send_input_to_server("MOVE_LEFT")
                 elif event.key == pygame.K_RIGHT:
