@@ -227,7 +227,7 @@ def lobby_network_thread(host: str, port: int):
     
     sock = None
     try:
-        # 1. Perform the initial connection
+        # --- NEW CONNECTION LOGIC ---
         try:
             logging.info(f"Connecting to lobby server at {host}:{port}...")
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -243,6 +243,9 @@ def lobby_network_thread(host: str, port: int):
                 g_client_state = "ERROR"
             g_running = False
             return # Exit the thread
+        
+        # Initialize the refresh timer *inside* the try block
+        last_refresh_time = time.time()
         
         # 2. Main send/receive loop for the lobby
         while g_running and g_client_state != "GAME":
@@ -266,7 +269,7 @@ def lobby_network_thread(host: str, port: int):
                 if msg_type == "ROOM_UPDATE":
                     with g_state_lock:
                         g_room_data = msg
-                        g_client_state = "IN_ROOM" 
+                        g_client_state = "IN_ROOM"
                         
                 elif msg_type == "INVITE_RECEIVED":
                     with g_state_lock:
@@ -365,7 +368,7 @@ def lobby_network_thread(host: str, port: int):
                     send_to_lobby_queue({"action": "list_users"})
                     
                 last_refresh_time = current_time
-                
+            
     except (socket.error, json.JSONDecodeError, UnicodeDecodeError) as e:
         if g_running: logging.error(f"Error in lobby network thread: {e}")
     except Exception as e:

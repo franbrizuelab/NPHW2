@@ -552,7 +552,10 @@ def handle_start_game(client_sock: socket.socket, username: str):
     with g_session_lock:
         status = g_client_sessions.get(username, {}).get("status", "")
         if status.startswith("in_room_"):
-            room_id = int(status.split('_')[-1])
+            try:
+                room_id = int(status.split('_')[-1])
+            except (ValueError, IndexError):
+                pass
             
     if room_id is None:
         send_to_client(client_sock, {"status": "error", "reason": "not_in_a_room"})
@@ -572,21 +575,28 @@ def handle_start_game(client_sock: socket.socket, username: str):
             send_to_client(client_sock, {"status": "error", "reason": "room_not_full"})
             return
             
-        # All checks passed, start the game
+        # --- All checks passed, start the game ---
         try:
             # 1. Find a free port
             game_port = find_free_port(config.GAME_SERVER_START_PORT)
             
-            # 2. Launch the game_server.py process
-            # (Assumes game_server.py is in the same directory)
+            # --- THIS IS THE CORRECTED PART ---
+            # 2. Get player names and launch the process
+            player1_name = room["players"][0]
+            player2_name = room["players"][1]
+            
             command = [
                 "python3", 
                 "game_server.py", 
-                "--port", str(game_port)
+                "--port", str(game_port),
+                "--p1", player1_name,  # Pass P1 username
+                "--p2", player2_name   # Pass P2 username
             ]
             subprocess.Popen(command)
             
-            logging.info(f"Launched GameServer for room {room_id} on port {game_port}")
+            # This log message is updated
+            logging.info(f"Launched GameServer for {player1_name} and {player2_name} on port {game_port}")
+            # --- END OF FIX ---
             
             # 3. Notify both players
             game_info_msg = {
@@ -594,9 +604,6 @@ def handle_start_game(client_sock: socket.socket, username: str):
                 "host": config.LOBBY_HOST, # The IP to connect to
                 "port": game_port
             }
-            
-            player1_name = room["players"][0]
-            player2_name = room["players"][1]
             
             with g_session_lock:
                 p1_sock = g_client_sessions.get(player1_name, {}).get("sock")
