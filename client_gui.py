@@ -1,3 +1,5 @@
+# File: client_gui.py
+#
 # This is the FULL client, which handles both Lobby and Game.
 # A state machine: LOGIN -> LOBBY -> IN_ROOM -> GAME
 # Connects to the Lobby Server first.
@@ -67,7 +69,6 @@ CONFIG = {
 }
 
 # UI helper classes
-
 class TextInput:
     def __init__(self, x, y, w, h, font, text=''):
         self.rect = pygame.Rect(x, y, w, h)
@@ -119,7 +120,7 @@ class Button:
 
 # Global state
 g_state_lock = threading.Lock()
-g_client_state = "LOGIN" # LOGIN, LOBBY, IN_ROOM, GAME
+g_client_state = "CONNECTING" # CONNECTING, LOGIN, LOBBY, IN_ROOM, GAME, ERROR
 g_running = True
 g_username = None
 g_error_message = None # For login errors
@@ -128,6 +129,7 @@ g_error_message = None # For login errors
 g_lobby_socket = None
 g_game_socket = None
 g_lobby_send_queue = queue.Queue()
+g_game_send_queue = queue.Queue() # Queue for game inputs
 
 # Lobby/Room State
 g_lobby_data = {"users": [], "rooms": []}
@@ -139,28 +141,18 @@ g_last_game_state = None
 g_game_over_results = None
 g_my_role = None # "P1" or "P2"
 
-# Nwtwork Functions
-
+# Network Functions
 def send_to_lobby_queue(request: dict):
     """Puts a request into the lobby send queue."""
     g_lobby_send_queue.put(request)
 
-def send_input_to_server(action: str):
-    """Sends a player action to the game server."""
-    global g_game_socket, g_running
-    if g_game_socket:
-        try:
-            message = {"type": "INPUT", "action": action}
-            json_bytes = json.dumps(message).encode('utf-8')
-            protocol.send_msg(g_game_socket, json_bytes)
-        except socket.error as e:
-            logging.warning(f"Failed to send input '{action}': {e}")
-            g_running = False
+def send_input_to_server_queue(action: str):
+    """Puts a game action into the game send queue."""
+    g_game_send_queue.put({"type": "INPUT", "action": action})
 
 def game_network_thread(sock: socket.socket):
     """
-    This is the old 'network_thread_func'.
-    It only listens for GAME messages.
+    This thread handles BOTH sending and receiving for the game.
     """
     global g_last_game_state, g_game_over_results, g_running, g_client_state
     global g_game_socket, g_my_role
@@ -168,26 +160,41 @@ def game_network_thread(sock: socket.socket):
     
     try:
         while g_running:
-            data_bytes = protocol.recv_msg(sock)
-            if data_bytes is None:
-                logging.warning("Game server disconnected.")
+            # Wait for readability or a timeout to check the send queue
+            readable, _, exceptional = select.select([sock], [], [sock], 0.1)
+
+            if exceptional:
+                logging.error("Game socket exception.")
                 break
+
+            # 1. Check for messages to RECEIVE
+            if sock in readable:
+                data_bytes = protocol.recv_msg(sock)
+                if data_bytes is None:
+                    logging.warning("Game server disconnected.")
+                    break
                 
-            snapshot = json.loads(data_bytes.decode('utf-8'))
-            msg_type = snapshot.get("type")
-            
-            if msg_type == "SNAPSHOT":
-                with g_state_lock:
-                    g_last_game_state = snapshot
-            
-            elif msg_type == "GAME_OVER":
-                logging.info(f"Game over! Results: {snapshot}")
-                with g_state_lock:
-                    g_game_over_results = snapshot
-                # We'll let the user look at the score,
-                # they can press Esc to return to lobby (or we can add a button)
-                # For now, we just stop receiving.
-                break
+                snapshot = json.loads(data_bytes.decode('utf-8'))
+                msg_type = snapshot.get("type")
+                
+                if msg_type == "SNAPSHOT":
+                    with g_state_lock:
+                        g_last_game_state = snapshot
+                
+                elif msg_type == "GAME_OVER":
+                    logging.info(f"Game over! Results: {snapshot}")
+                    with g_state_lock:
+                        g_game_over_results = snapshot
+                    break # Game is over, stop this thread
+
+            # 2. Check for messages to SEND
+            try:
+                while not g_game_send_queue.empty():
+                    request = g_game_send_queue.get_nowait()
+                    json_bytes = json.dumps(request).encode('utf-8')
+                    protocol.send_msg(sock, json_bytes) # Send the message
+            except queue.Empty:
+                pass # No more messages to send
 
     except (socket.error, json.JSONDecodeError, UnicodeDecodeError) as e:
         if g_running:
@@ -203,35 +210,56 @@ def game_network_thread(sock: socket.socket):
             g_last_game_state = None
             g_game_over_results = None
             g_my_role = None
+            # Refresh lobby lists now that we're back
+            send_to_lobby_queue({"action": "list_rooms"})
+            send_to_lobby_queue({"action": "list_users"})
 
-#  This thread listens for messages from the LOBBY
-def lobby_network_thread(sock: socket.socket):
+def lobby_network_thread(host: str, port: int):
     """
-    This thread handles BOTH sending (from a queue)
-    and receiving (from the socket) for the lobby.
+    This thread handles the initial connection, plus
+    BOTH sending (from a queue) and receiving (from the socket)
+    for the lobby.
     """
     global g_running, g_lobby_data, g_room_data, g_invite_popup
-    global g_client_state, g_game_socket, g_my_role
+    global g_client_state, g_game_socket, g_my_role, g_lobby_socket
+    global g_error_message
     logging.info("Lobby network thread started.")
     
-    while g_running:
+    sock = None
+    try:
+        # 1. Perform the initial connection
         try:
+            logging.info(f"Connecting to lobby server at {host}:{port}...")
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.connect((host, port))
+            g_lobby_socket = sock # Store the socket globally
+            logging.info("Connected!")
+            with g_state_lock:
+                g_client_state = "LOGIN" # Connection success, move to login
+        except socket.error as e:
+            logging.critical(f"Failed to connect to lobby: {e}")
+            with g_state_lock:
+                g_error_message = f"Failed to connect: {e}"
+                g_client_state = "ERROR"
+            g_running = False
+            return # Exit the thread
+        
+        # 2. Main send/receive loop for the lobby
+        while g_running and g_client_state != "GAME":
             # Use select to wait for readability OR a short timeout
-            # lets us check the send queue often
             readable, _, exceptional = select.select([sock], [], [sock], 0.1)
 
             if exceptional:
                 logging.error("Lobby socket exception.")
                 break
 
-            # 1. Check for messages to RECEIVE
+            # 2a. Check for messages to RECEIVE
             if sock in readable:
                 data_bytes = protocol.recv_msg(sock)
                 if data_bytes is None:
                     if g_running: logging.warning("Lobby server disconnected.")
                     break
                 
-                # --- Process the received message (this logic is the same as before) ---
                 msg = json.loads(data_bytes.decode('utf-8'))
                 msg_type = msg.get("type")
             
@@ -245,14 +273,14 @@ def lobby_network_thread(sock: socket.socket):
                         
                 elif msg_type == "GAME_START":
                     # This is the HAND-OFF!
-                    host = msg.get("host")
-                    port = msg.get("port")
-                    logging.info(f"Hand-off received. Connecting to game at {host}:{port}")
+                    game_host = msg.get("host")
+                    game_port = msg.get("port")
+                    logging.info(f"Hand-off received. Connecting to game at {game_host}:{game_port}")
                     
                     try:
                         # 1. Connect to new game server
                         game_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                        game_sock.connect((host, port))
+                        game_sock.connect((game_host, game_port))
                         
                         # 2. Receive WELCOME
                         welcome_bytes = protocol.recv_msg(game_sock)
@@ -278,7 +306,7 @@ def lobby_network_thread(sock: socket.socket):
                             
                             # 5. This lobby thread is done.
                             logging.info(f"Hand-off complete. My role: {g_my_role}.")
-                            break
+                            break # Exit lobby loop
                         
                         else:
                             raise Exception("Did not receive WELCOME from game server")
@@ -315,7 +343,7 @@ def lobby_network_thread(sock: socket.socket):
                     with g_state_lock:
                         g_error_message = msg.get('reason')
 
-            # 2. Check for messages to SEND
+            # 2b. Check for messages to SEND
             try:
                 while not g_lobby_send_queue.empty():
                     request = g_lobby_send_queue.get_nowait()
@@ -324,18 +352,17 @@ def lobby_network_thread(sock: socket.socket):
             except queue.Empty:
                 pass # No more messages to send
             
-        except (socket.error, json.JSONDecodeError, UnicodeDecodeError) as e:
-            if g_running: logging.error(f"Error in lobby network thread: {e}")
-            break
-        except Exception as e:
-            if g_running: logging.error(f"Unexpected lobby network thread error: {e}", exc_info=True)
-            break
+    except (socket.error, json.JSONDecodeError, UnicodeDecodeError) as e:
+        if g_running: logging.error(f"Error in lobby network thread: {e}")
+    except Exception as e:
+        if g_running: logging.error(f"Unexpected lobby network thread error: {e}", exc_info=True)
             
-    g_running = False
-    logging.info("Lobby network thread exiting.")
+    g_running = False # If the loop breaks, stop the app
+    if g_client_state != "GAME":
+        logging.info("Lobby network thread exiting.")
+    # If state is GAME, the game thread is now in control
 
-### ALL DRAWING FUNCTIONS ###
-
+# Drawing Functions
 def draw_text(surface, text, x, y, font, size, color):
     try:
         font_obj = pygame.font.Font(font, size)
@@ -344,7 +371,6 @@ def draw_text(surface, text, x, y, font, size, color):
     except Exception:
         pass # Ignore font errors
 
-# (draw_board is unchanged)
 def draw_board(surface, board_data, x_start, y_start, block_size):
     num_rows = len(board_data); num_cols = len(board_data[0])
     colors = CONFIG["COLORS"]["PIECE_COLORS"]; grid_color = CONFIG["COLORS"]["GRID_LINES"]
@@ -357,7 +383,6 @@ def draw_board(surface, board_data, x_start, y_start, block_size):
                 pygame.draw.rect(surface, block_color, rect, 0)
             pygame.draw.rect(surface, grid_color, rect, 1)
 
-# (draw_game_state is unchanged, but we'll paste it for completeness)
 def draw_game_state(surface, font_name, state):
     surface.fill(CONFIG["COLORS"]["BACKGROUND"])
     if state is None:
@@ -424,7 +449,6 @@ def draw_game_state(surface, font_name, state):
     elif my_state.get("game_over", False):
         draw_text(surface, "GAME OVER", pos["GAME_OVER_TEXT"][0], pos["GAME_OVER_TEXT"][1], font_name, fonts["GAME_OVER_SIZE"], colors["GAME_OVER"])
 
-# Draw functions (Lobby)
 def draw_login_screen(screen, font_small, font_large, ui_elements):
     screen.fill(CONFIG["COLORS"]["BACKGROUND"])
     draw_text(screen, "Welcome to Tetris", 250, 100, None, CONFIG["FONTS"]["TITLE_SIZE"], CONFIG["COLORS"]["TEXT"])
@@ -437,8 +461,10 @@ def draw_login_screen(screen, font_small, font_large, ui_elements):
     ui_elements["login_btn"].draw(screen)
     ui_elements["reg_btn"].draw(screen)
     
-    if g_error_message:
-        draw_text(screen, g_error_message, 250, 400, font_small, CONFIG["FONTS"]["SCORE_SIZE"], CONFIG["COLORS"]["ERROR"])
+    with g_state_lock:
+        error_msg = g_error_message
+    if error_msg:
+        draw_text(screen, error_msg, 250, 400, font_small, CONFIG["FONTS"]["SCORE_SIZE"], CONFIG["COLORS"]["ERROR"])
 
 def draw_lobby_screen(screen, font_small, font_large, ui_elements):
     screen.fill(CONFIG["COLORS"]["BACKGROUND"])
@@ -449,34 +475,32 @@ def draw_lobby_screen(screen, font_small, font_large, ui_elements):
     draw_text(screen, "Rooms:", 50, 150, font_small, CONFIG["FONTS"]["SCORE_SIZE"], CONFIG["COLORS"]["TEXT"])
     draw_text(screen, "Users:", 450, 150, font_small, CONFIG["FONTS"]["SCORE_SIZE"], CONFIG["COLORS"]["TEXT"])
 
-    # Draw room list
     with g_state_lock:
-        ui_elements["rooms_list"] = []
-        for i, room in enumerate(g_lobby_data.get("rooms", [])):
-            y = 200 + i * 40
-            room_text = f"{room['name']} ({room['players']}/2) - Host: {room['host']}"
-            btn = Button(50, y, 350, 35, font_small, room_text)
-            btn.room_id = room['id'] # Attach data to the button
-            btn.draw(screen)
-            ui_elements["rooms_list"].append(btn)
-            
-        # Draw user list
-        with g_state_lock:
-            ui_elements["users_list"] = [] # Clear old buttons
-            for i, user in enumerate(g_lobby_data.get("users", [])):
-                y = 200 + i * 40
-                user_text = f"{user['username']} ({user['status']})"
-                
-                # Make the button clickable only if it's not you and is online
-                is_inviteable = (user['username'] != g_username and user['status'] == 'online')
-                
-                btn = Button(450, y, 350, 35, font_small, user_text)
-                btn.username = user['username']
-                btn.is_invite = is_inviteable
-                btn.draw(screen)
-                
-                if is_inviteable:
-                    ui_elements["users_list"].append(btn)
+        rooms = g_lobby_data.get("rooms", [])
+        users = g_lobby_data.get("users", [])
+    
+    ui_elements["rooms_list"] = []
+    for i, room in enumerate(rooms):
+        y = 200 + i * 40
+        room_text = f"{room['name']} ({room['players']}/2) - Host: {room['host']}"
+        btn = Button(50, y, 350, 35, font_small, room_text)
+        btn.room_id = room['id']
+        btn.draw(screen)
+        ui_elements["rooms_list"].append(btn)
+        
+    ui_elements["users_list"] = []
+    for i, user in enumerate(users):
+        y = 200 + i * 40
+        user_text = f"{user['username']} ({user['status']})"
+        is_inviteable = (user['username'] != g_username and user['status'] == 'online')
+        
+        btn = Button(450, y, 350, 35, font_small, user_text)
+        btn.username = user['username']
+        btn.is_invite = is_inviteable
+        btn.draw(screen)
+        
+        if is_inviteable:
+            ui_elements["users_list"].append(btn)
 
 def draw_room_screen(screen, font_small, font_large, ui_elements):
     screen.fill(CONFIG["COLORS"]["BACKGROUND"])
@@ -505,7 +529,6 @@ def draw_room_screen(screen, font_small, font_large, ui_elements):
     else:
         draw_text(screen, "Waiting for host to start...", 50, 400, font_small, CONFIG["FONTS"]["SCORE_SIZE"], CONFIG["COLORS"]["TEXT"])
 
-# Draws the invite popup if one is active
 def draw_invite_popup(screen, font_small, ui_elements):
     global g_invite_popup
     
@@ -564,26 +587,15 @@ def main():
         "invite_decline_btn": Button(460, 350, 140, 40, font_small, "Decline"),
     }
     
-    # 4. Connect to Lobby Server
+    # 4. Start the lobby network thread
+    # The thread will handle the connection itself.
     host = CONFIG["NETWORK"]["HOST"]
     port = CONFIG["NETWORK"]["PORT"]
-    try:
-        logging.info(f"Connecting to lobby server at {host}:{port}...")
-        g_lobby_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        g_lobby_socket.connect((host, port))
-        logging.info("Connected!")
-    except socket.error as e:
-        logging.critical(f"Failed to connect to lobby: {e}")
-        g_error_message = f"Failed to connect to lobby: {e}"
-        g_client_state = "ERROR"
-    
-    # 5. Start the lobby network thread
-    if g_client_state != "ERROR":
-        threading.Thread(
-            target=lobby_network_thread,
-            args=(g_lobby_socket,),
-            daemon=True
-        ).start()
+    threading.Thread(
+        target=lobby_network_thread,
+        args=(host, port), # Pass host and port
+        daemon=True
+    ).start()
 
     # 6. Main Game Loop (State Machine)
     while g_running:
@@ -591,9 +603,10 @@ def main():
         # Handle Input Events
         events = pygame.event.get()
         
-        popup_active = False
+        # We read the state *once* per frame for consistency
         with g_state_lock:
             popup_active = (g_invite_popup is not None)
+            current_client_state = g_client_state
         
         if popup_active:
             # POPUP IS ACTIVE
@@ -621,7 +634,7 @@ def main():
                     g_running = False
 
                 # Pass events to the correct handler based on state
-                if g_client_state == "LOGIN":
+                if current_client_state == "LOGIN":
                     ui_elements["user_input"].handle_event(event)
                     ui_elements["pass_input"].handle_event(event)
                     
@@ -635,15 +648,17 @@ def main():
                     if ui_elements["reg_btn"].handle_event(event):
                         send_to_lobby_queue({"action": "register", "data": {"user": ui_elements["user_input"].text, "pass": ui_elements["pass_input"].text}})
 
-                elif g_client_state == "LOBBY":
+                elif current_client_state == "LOBBY":
                     if ui_elements["create_room_btn"].handle_event(event):
                         send_to_lobby_queue({"action": "create_room", "data": {"name": f"{g_username}'s Room"}})
-                        g_client_state = "IN_ROOM" # Optimistic state change
+                        with g_state_lock:
+                            g_client_state = "IN_ROOM" # Optimistic state change
                     
                     for room_btn in ui_elements["rooms_list"]:
                         if room_btn.handle_event(event):
                             send_to_lobby_queue({"action": "join_room", "data": {"room_id": room_btn.room_id}})
-                            g_client_state = "IN_ROOM" # Optimistic state change
+                            with g_state_lock:
+                                g_client_state = "IN_ROOM" # Optimistic state change
                     
                     for user_btn in ui_elements["users_list"]:
                         if user_btn.handle_event(event) and user_btn.is_invite:
@@ -653,41 +668,46 @@ def main():
                                 "data": {"target_user": user_btn.username}
                             })
                 
-                elif g_client_state == "IN_ROOM":
+                elif current_client_state == "IN_ROOM":
                     if ui_elements["start_game_btn"].handle_event(event):
                         send_to_lobby_queue({"action": "start_game"})
                         # State will be changed to "GAME" by the network thread
                 
-                elif g_client_state == "GAME":
-                    # This is the old input handler
-                    if event.type == pygame.KEYDOWN and g_game_over_results is None:
-                        if event.key == pygame.K_LEFT: send_input_to_server("MOVE_LEFT")
-                        elif event.key == pygame.K_RIGHT: send_input_to_server("MOVE_RIGHT")
-                        elif event.key == pygame.K_DOWN: send_input_to_server("SOFT_DROP")
-                        elif event.key == pygame.K_UP: send_input_to_server("ROTATE")
-                        elif event.key == pygame.K_SPACE: send_input_to_server("HARD_DROP")
+                elif current_client_state == "GAME":
+                    with g_state_lock:
+                        game_is_over = (g_game_over_results is not None)
+                        
+                    if event.type == pygame.KEYDOWN and not game_is_over:
+                        if event.key == pygame.K_LEFT: send_input_to_server_queue("MOVE_LEFT")
+                        elif event.key == pygame.K_RIGHT: send_input_to_server_queue("MOVE_RIGHT")
+                        elif event.key == pygame.K_DOWN: send_input_to_server_queue("SOFT_DROP")
+                        elif event.key == pygame.K_UP: send_input_to_server_queue("ROTATE")
+                        elif event.key == pygame.K_SPACE: send_input_to_server_queue("HARD_DROP")
                         elif event.key == pygame.K_ESCAPE: 
-                            # User can press Esc to leave game
                             if g_game_socket:
                                 g_game_socket.close() # This will trigger the game_network_thread to exit
-
         
         # Render Graphics
-        if g_client_state == "LOGIN":
+        if current_client_state == "CONNECTING":
+            screen.fill(CONFIG["COLORS"]["BACKGROUND"])
+            draw_text(screen, "Connecting to lobby...", 250, 300, font_large, 36, CONFIG["COLORS"]["TEXT"])
+        elif current_client_state == "LOGIN":
             draw_login_screen(screen, font_small, font_large, ui_elements)
-        elif g_client_state == "LOBBY":
+        elif current_client_state == "LOBBY":
             draw_lobby_screen(screen, font_small, font_large, ui_elements)
-        elif g_client_state == "IN_ROOM":
+        elif current_client_state == "IN_ROOM":
             draw_room_screen(screen, font_small, font_large, ui_elements)
-        elif g_client_state == "GAME":
+        elif current_client_state == "GAME":
             with g_state_lock:
                 state_copy = g_last_game_state.copy() if g_last_game_state else None
             draw_game_state(screen, CONFIG["FONTS"]["DEFAULT_FONT"], state_copy)
-        elif g_client_state == "ERROR":
+        elif current_client_state == "ERROR":
             screen.fill(CONFIG["COLORS"]["BACKGROUND"])
             draw_text(screen, "Connection Error", 250, 100, None, 50, CONFIG["COLORS"]["ERROR"])
-            if g_error_message:
-                draw_text(screen, g_error_message, 100, 200, font_small, 30, CONFIG["COLORS"]["ERROR"])
+            with g_state_lock:
+                error_msg = g_error_message
+            if error_msg:
+                draw_text(screen, error_msg, 100, 200, font_small, 30, CONFIG["COLORS"]["ERROR"])
         
         draw_invite_popup(screen, font_small, ui_elements)
 
