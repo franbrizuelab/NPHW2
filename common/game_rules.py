@@ -200,6 +200,10 @@ class TetrisGame:
             # Commit the rotation
             self.current_piece.rotation += 1
 
+    # ...
+    def tick(self):
+        self.soft_drop()
+
     def soft_drop(self):
         """Move the current piece down by one, or lock if it collides."""
         if self.game_over or self.current_piece is None:

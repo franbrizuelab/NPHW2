@@ -32,7 +32,7 @@ except ImportError:
 # Configuration
 HOST = config.LOBBY_HOST  # Bind to the same IP as the lobby
 PORT = config.GAME_SERVER_START_PORT # This will be passed by the lobby
-GRAVITY_INTERVAL_MS = 500 # How often pieces fall (in ms)
+GRAVITY_INTERVAL_MS = 400 # How often pieces fall (in ms)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='[GAME_SERVER] %(asctime)s - %(message)s')
@@ -67,9 +67,9 @@ def handle_client(sock: socket.socket, player_id: int, input_queue: queue.Queue)
             
     except socket.error as e:
         logging.error(f"Socket error for Player {player_id + 1}: {e}")
+        input_queue.put((player_id, "DISCONNECT"))
     finally:
         sock.close()
-        # (TODO: Send a message to the queue to signal disconnect)
         logging.info(f"Client thread stopped for Player {player_id + 1}.")
 
 # Game Logic
@@ -113,9 +113,10 @@ def process_input(game: TetrisGame, action: str):
     elif action == "HARD_DROP":
         game.hard_drop()
 
-def handle_game_end(clients: list, game_p1: TetrisGame, game_p2: TetrisGame, winner: str):
+# UPDATE SIGNATURE
+def handle_game_end(clients: list, game_p1: TetrisGame, game_p2: TetrisGame, winner: str, p1_user: str, p2_user: str):
     """
-    Handles end-of-game logic:
+    Handles all end-of-game logic:
     1. Builds the GameLog.
     2. Reports the log to the DB server.
     3. Sends the final GAME_OVER message to both clients.
@@ -123,18 +124,16 @@ def handle_game_end(clients: list, game_p1: TetrisGame, game_p2: TetrisGame, win
     logging.info(f"Game loop finished. Winner: {winner}")
     
     # 1. Build GameLog
-    # (TODO: We should pass player *usernames* to the game server,
-    # but for now, "Player1" and "Player2" are placeholders)
-    p1_results = {"userId": "Player1", "score": game_p1.score, "lines": game_p1.lines_cleared}
-    p2_results = {"userId": "Player2", "score": game_p2.score, "lines": game_p2.lines_cleared}
+    p1_results = {"userId": p1_user, "score": game_p1.score, "lines": game_p1.lines_cleared}
+    p2_results = {"userId": p2_user, "score": game_p2.score, "lines": game_p2.lines_cleared}
     
     game_log = {
         "matchid": f"match_{int(time.time())}",
-        "users": ["Player1", "Player2"], # Placeholder usernames
+        "users": [p1_user, p2_user], # Use real usernames
         "results": [p1_results, p2_results],
         "winner": winner
     }
-    
+
     # 2. Report to DB
     db_response = forward_to_db({
         "collection": "GameLog",
@@ -154,22 +153,18 @@ def handle_game_end(clients: list, game_p1: TetrisGame, game_p2: TetrisGame, win
         "p2_results": p2_results
     }
     try:
-        # Create a copy in case a client disconnected and the list changes
         for sock in list(clients):
             if sock:
                 protocol.send_msg(sock, json.dumps(game_over_msg).encode('utf-8'))
     except Exception as e:
         logging.warning(f"Failed to send GAME_OVER message: {e}")
 
-
-def game_loop(clients: list, input_queue: queue.Queue, game_p1: TetrisGame, game_p2: TetrisGame):
-    """
-    The main heartbeat of the server.
-    Runs gravity, processes inputs, and broadcasts state.
-    """
+# Runs gravity, processes inputs, and broadcasts state
+def game_loop(clients: list, input_queue: queue.Queue, game_p1: TetrisGame, game_p2: TetrisGame, p1_user: str, p2_user: str):
     logging.info("Game loop started.")
     last_tick_time = time.time()
-    
+    winner = None
+
     while True:
         # Process Inputs
         # Empty the input queue
@@ -221,7 +216,7 @@ def game_loop(clients: list, input_queue: queue.Queue, game_p1: TetrisGame, game
         # Don't burn CPU
         time.sleep(0.01)
         
-    handle_game_end(clients, game_p1, game_p2, winner)
+    handle_game_end(clients, game_p1, game_p2, winner, p1_user, p2_user)
 
 def forward_to_db(request: dict) -> dict | None:
     """Acts as a client to the DB_Server."""
@@ -253,9 +248,17 @@ def main():
         default=config.GAME_SERVER_START_PORT, 
         help='Port to listen on'
     )
+    parser.add_argument('--p1', type=str, required=True, help='Username of Player 1')
+    parser.add_argument('--p2', type=str, required=True, help='Username of Player 2')
     args = parser.parse_args()
     PORT = args.port
-    
+    P1_USERNAME = args.p1 # <-- ADD THIS
+    P2_USERNAME = args.p2 # <-- ADD THIS
+
+    # TODO: erase these temporary lines
+    HOST = '0.0.0.0'
+    game_seed = random.randint(0, 1_000_000)
+
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     
@@ -314,7 +317,7 @@ def main():
         game_p2 = TetrisGame(game_seed)
         
         # 3. Run the main game loop
-        game_loop(clients, input_queue, game_p1, game_p2)
+        game_loop(clients, input_queue, game_p1, game_p2, P1_USERNAME, P2_USERNAME)
 
     except KeyboardInterrupt:
         logging.info("Shutting down game server.")

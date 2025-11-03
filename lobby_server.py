@@ -212,7 +212,50 @@ def handle_logout(username: str):
         db_status_response = forward_to_db(db_status_update_req)
         if not db_status_response or db_status_response.get("status") != "ok":
             logging.warning(f"Failed to update 'offline' status in DB for {username}.")
-        # (TODO: Remove user from any room they were in)
+        
+        # Remove user from any room they were in
+        room_to_update = None
+        new_host = None
+        
+        # 1. Find the room the user is in from their session status
+        room_id_str = session.get("status", "online")
+        if room_id_str.startswith("in_room_"):
+            try:
+                room_id = int(room_id_str.split('_')[-1])
+                
+                with g_room_lock:
+                    room = g_rooms.get(room_id)
+                    if room:
+                        # 2. Remove user from room
+                        if username in room["players"]:
+                            room["players"].remove(username)
+                            logging.info(f"Removed {username} from room {room_id}.")
+                        
+                        # 3. Handle room state change
+                        if not room["players"]:
+                            # Room is empty, delete it
+                            del g_rooms[room_id]
+                            logging.info(f"Room {room_id} is empty, deleting.")
+                        elif room["host"] == username:
+                            # User was host, promote new host (the next player in list)
+                            room["host"] = room["players"][0]
+                            new_host = room["host"]
+                            room_to_update = room_id
+                            logging.info(f"Host {username} left, promoting {new_host} in room {room_id}.")
+            except (ValueError, IndexError):
+                logging.warning(f"Could not parse room ID from status: {room_id_str}")
+
+        # 4. Notify new host (if one was promoted)
+        # This is done outside the g_room_lock to avoid deadlocks
+        if room_to_update and new_host:
+            with g_session_lock:
+                new_host_session = g_client_sessions.get(new_host)
+                if new_host_session:
+                    send_to_client(new_host_session["sock"], {
+                        "type": "PROMOTED_TO_HOST",
+                        "room_id": room_to_update
+                    })
+        # End of room removal logic
         
         # Send final confirmation and close socket
         try:
@@ -256,10 +299,23 @@ def handle_create_room(client_sock: socket.socket, username: str, data: dict):
     global g_room_counter
     room_name = data.get("name", f"{username}'s Room")
     
-    with g_room_lock:
-        # (TODO: Check if user is already in another room)
+    # Check if user is already in another room
+    # 1. Check user's current status before locking rooms
+    with g_session_lock:
+        session = g_client_sessions.get(username)
+        if not session:
+            # This should not happen if they are logged in, but is a good safety check
+            send_to_client(client_sock, {"status": "error", "reason": "session_not_found"})
+            return
         
-        # Create a new room
+        if session["status"] != "online":
+            # User is already in a room or in-game
+            send_to_client(client_sock, {"status": "error", "reason": "already_in_a_room"})
+            return
+    # End of check
+    
+    with g_room_lock:
+        # 2. Create a new room
         room_id = g_room_counter
         g_room_counter += 1
         
@@ -270,11 +326,124 @@ def handle_create_room(client_sock: socket.socket, username: str, data: dict):
             "status": "idle"
         }
     
+    # 3. Update the user's status to show they are in the new room
     with g_session_lock:
         g_client_sessions[username]["status"] = f"in_room_{room_id}"
         
     logging.info(f"User '{username}' created room {room_id} ('{room_name}').")
     send_to_client(client_sock, {"status": "ok", "room_id": room_id, "name": room_name})
+
+def handle_join_room(client_sock: socket.socket, username: str, data: dict):
+    """Handles 'join_room' action."""
+    global g_room_lock, g_rooms, g_client_sessions
+    
+    try:
+        room_id = int(data.get("room_id"))
+    except (TypeError, ValueError):
+        send_to_client(client_sock, {"status": "error", "reason": "invalid_room_id"})
+        return
+
+    # 1. Check if user is already in a room
+    with g_session_lock:
+        session = g_client_sessions.get(username)
+        if session and session["status"] != "online":
+            send_to_client(client_sock, {"status": "error", "reason": "already_in_a_room"})
+            return
+            
+    # 2. Find and validate the room
+    all_players_in_room = []
+    with g_room_lock:
+        room = g_rooms.get(room_id)
+        
+        if not room:
+            send_to_client(client_sock, {"status": "error", "reason": "room_not_found"})
+            return
+        
+        if room["status"] != "idle":
+            send_to_client(client_sock, {"status": "error", "reason": "room_is_playing"})
+            return
+            
+        if len(room["players"]) >= 2:
+            send_to_client(client_sock, {"status": "error", "reason": "room_is_full"})
+            return
+            
+        # 3. Join the room
+        room["players"].append(username)
+        all_players_in_room = list(room["players"]) # Get a copy of the player list
+
+    # 4. Update user's session status
+    with g_session_lock:
+        g_client_sessions[username]["status"] = f"in_room_{room_id}"
+        
+    logging.info(f"User '{username}' joined room {room_id}.")
+
+    # 5. Notify all players in the room of the change
+    room_update_msg = {
+        "type": "ROOM_UPDATE",
+        "room_id": room_id,
+        "players": all_players_in_room,
+        "host": room.get("host")
+    }
+    
+    with g_session_lock:
+        for player_name in all_players_in_room:
+            player_session = g_client_sessions.get(player_name)
+            if player_session:
+                send_to_client(player_session["sock"], room_update_msg)
+
+
+def handle_invite(client_sock: socket.socket, inviter_username: str, data: dict):
+    """Handles 'invite' action."""
+    target_username = data.get("target_user")
+    if not target_username:
+        send_to_client(client_sock, {"status": "error", "reason": "no_target_user"})
+        return
+        
+    if target_username == inviter_username:
+        send_to_client(client_sock, {"status": "error", "reason": "cannot_invite_self"})
+        return
+
+    room_id = None
+    target_sock = None
+    
+    with g_session_lock:
+        # 1. Get inviter's room
+        inviter_session = g_client_sessions.get(inviter_username)
+        if inviter_session and inviter_session["status"].startswith("in_room_"):
+            try:
+                room_id = int(inviter_session["status"].split('_')[-1])
+            except (ValueError, IndexError):
+                pass # room_id remains None
+        
+        if room_id is None:
+            send_to_client(client_sock, {"status": "error", "reason": "not_in_a_room"})
+            return
+            
+        # 2. Find target user and check their status
+        target_session = g_client_sessions.get(target_username)
+        if not target_session:
+            send_to_client(client_sock, {"status": "error", "reason": "user_not_online"})
+            return
+            
+        if target_session["status"] != "online":
+            send_to_client(client_sock, {"status": "error", "reason": "user_is_busy"})
+            return
+        
+        target_sock = target_session["sock"]
+
+    # 3. Send the invite
+    if target_sock:
+        invite_msg = {
+            "type": "INVITE_RECEIVED",
+            "from_user": inviter_username,
+            "room_id": room_id
+        }
+        send_to_client(target_sock, invite_msg)
+        send_to_client(client_sock, {"status": "ok", "reason": "invite_sent"})
+        logging.info(f"User '{inviter_username}' invited '{target_username}' to room {room_id}.")
+    else:
+        # This case should be rare but good to handle
+        send_to_client(client_sock, {"status": "error", "reason": "could_not_find_target_socket"})
 
 # Client Handling Thread
 
@@ -340,7 +509,12 @@ def handle_client(client_sock: socket.socket, addr: tuple):
                 
                 elif action == 'start_game':
                     handle_start_game(client_sock, username)
-                # (TODO: Add 'join_room', 'invite')
+                
+                elif action == 'join_room':
+                    handle_join_room(client_sock, username, data)
+                
+                elif action == 'invite':
+                    handle_invite(client_sock, username, data)
                 
                 else:
                     send_to_client(client_sock, {"status": "error", "reason": f"unknown_action: {action}"})
@@ -392,7 +566,7 @@ def handle_start_game(client_sock: socket.socket, username: str):
             send_to_client(client_sock, {"status": "error", "reason": "room_not_full"})
             return
             
-        # --- All checks passed, start the game ---
+        # All checks passed, start the game
         try:
             # 1. Find a free port
             game_port = find_free_port(config.GAME_SERVER_START_PORT)
