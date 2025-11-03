@@ -241,7 +241,7 @@ def main():
     
     try:
         # 3. Bind and Listen
-        server_socket.bind((DB_HOST, DB_PORT))
+        server_socket.bind(('0.0.0.0', DB_PORT))
         server_socket.listen()
         logging.info(f"Database Server listening on {DB_HOST}:{DB_PORT}...")
         logging.info("Press Ctrl+C to stop.")

@@ -282,7 +282,9 @@ def lobby_network_thread(sock: socket.socket):
 
             # We also get normal responses here
             elif msg.get("status") == "ok":
-                logging.info(f"Lobby OK: {msg.get('reason')}")
+                reason = msg.get('reason')
+                if reason:
+                    logging.info(f"Lobby OK: {reason}")
 
                 if msg.get("reason") == "login_successful":
                     with g_state_lock:
