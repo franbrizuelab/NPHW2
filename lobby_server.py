@@ -299,21 +299,18 @@ def handle_create_room(client_sock: socket.socket, username: str, data: dict):
     global g_room_counter
     room_name = data.get("name", f"{username}'s Room")
     
-    # Check if user is already in another room
-    # 1. Check user's current status before locking rooms
+    # 1. Check if user is already in another room
     with g_session_lock:
         session = g_client_sessions.get(username)
         if not session:
-            # This should not happen if they are logged in, but is a good safety check
             send_to_client(client_sock, {"status": "error", "reason": "session_not_found"})
             return
         
         if session["status"] != "online":
-            # User is already in a room or in-game
             send_to_client(client_sock, {"status": "error", "reason": "already_in_a_room"})
             return
-    # End of check
     
+    room_id = -1
     with g_room_lock:
         # 2. Create a new room
         room_id = g_room_counter
@@ -326,12 +323,21 @@ def handle_create_room(client_sock: socket.socket, username: str, data: dict):
             "status": "idle"
         }
     
-    # 3. Update the user's status to show they are in the new room
+    # 3. Update the user's status
     with g_session_lock:
         g_client_sessions[username]["status"] = f"in_room_{room_id}"
         
     logging.info(f"User '{username}' created room {room_id} ('{room_name}').")
-    send_to_client(client_sock, {"status": "ok", "room_id": room_id, "name": room_name})
+    
+    # 4. Send the new room data back to the client
+    room_update_msg = {
+        "type": "ROOM_UPDATE",
+        "room_id": room_id,
+        "name": room_name,
+        "players": [username], # Creator is the only one in it
+        "host": username
+    }
+    send_to_client(client_sock, room_update_msg)
 
 def handle_join_room(client_sock: socket.socket, username: str, data: dict):
     """Handles 'join_room' action."""

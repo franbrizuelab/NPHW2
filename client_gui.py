@@ -266,6 +266,7 @@ def lobby_network_thread(host: str, port: int):
                 if msg_type == "ROOM_UPDATE":
                     with g_state_lock:
                         g_room_data = msg
+                        g_client_state = "IN_ROOM" 
                         
                 elif msg_type == "INVITE_RECEIVED":
                     with g_state_lock:
@@ -352,6 +353,19 @@ def lobby_network_thread(host: str, port: int):
             except queue.Empty:
                 pass # No more messages to send
             
+            # 3. Check for periodic refresh
+            current_time = time.time()
+            if (current_time - last_refresh_time > 5):
+                # Every 5 seconds, refresh lists IF we are in the lobby
+                with g_state_lock:
+                    is_in_lobby = (g_client_state == "LOBBY")
+                
+                if is_in_lobby:
+                    send_to_lobby_queue({"action": "list_rooms"})
+                    send_to_lobby_queue({"action": "list_users"})
+                    
+                last_refresh_time = current_time
+                
     except (socket.error, json.JSONDecodeError, UnicodeDecodeError) as e:
         if g_running: logging.error(f"Error in lobby network thread: {e}")
     except Exception as e:
@@ -657,8 +671,8 @@ def main():
                     for room_btn in ui_elements["rooms_list"]:
                         if room_btn.handle_event(event):
                             send_to_lobby_queue({"action": "join_room", "data": {"room_id": room_btn.room_id}})
-                            with g_state_lock:
-                                g_client_state = "IN_ROOM" # Optimistic state change
+                            # with g_state_lock:
+                            #     g_client_state = "IN_ROOM" # Optimistic state change
                     
                     for user_btn in ui_elements["users_list"]:
                         if user_btn.handle_event(event) and user_btn.is_invite:
