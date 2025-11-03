@@ -252,8 +252,8 @@ def main():
     parser.add_argument('--p2', type=str, required=True, help='Username of Player 2')
     args = parser.parse_args()
     PORT = args.port
-    P1_USERNAME = args.p1 # <-- ADD THIS
-    P2_USERNAME = args.p2 # <-- ADD THIS
+    P1_USERNAME = args.p1 
+    P2_USERNAME = args.p2 
 
     # TODO: erase these temporary lines
     HOST = '0.0.0.0'

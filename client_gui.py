@@ -291,7 +291,7 @@ def lobby_network_thread(sock: socket.socket):
                     # Now that we're in, refresh the lists
                     send_to_lobby({"action": "list_rooms"})
                     send_to_lobby({"action": "list_users"})
-                    
+
                 # Handle room list response
                 if "rooms" in msg:
                     with g_state_lock:
@@ -515,7 +515,7 @@ def draw_invite_popup(screen, font_small, ui_elements):
         ui_elements["invite_decline_btn"].draw(screen)
 
 def main():
-    global g_running, g_client_state, g_lobby_socket
+    global g_running, g_client_state, g_lobby_socket, g_invite_popup
     global g_username, g_error_message
     
     # 1. Initialize Pygame
