@@ -11,6 +11,8 @@ import sys
 import os
 import time
 import logging
+import queue
+import select
 
 # Add project root to path
 try:
@@ -125,6 +127,7 @@ g_error_message = None # For login errors
 # Sockets
 g_lobby_socket = None
 g_game_socket = None
+g_lobby_send_queue = queue.Queue()
 
 # Lobby/Room State
 g_lobby_data = {"users": [], "rooms": []}
@@ -138,16 +141,9 @@ g_my_role = None # "P1" or "P2"
 
 # Nwtwork Functions
 
-def send_to_lobby(request: dict):
-    """Sends a JSON request to the lobby server."""
-    global g_lobby_socket, g_running
-    if g_lobby_socket:
-        try:
-            json_bytes = json.dumps(request).encode('utf-8')
-            protocol.send_msg(g_lobby_socket, json_bytes)
-        except Exception as e:
-            logging.error(f"Failed to send to lobby: {e}")
-            g_running = False
+def send_to_lobby_queue(request: dict):
+    """Puts a request into the lobby send queue."""
+    g_lobby_send_queue.put(request)
 
 def send_input_to_server(action: str):
     """Sends a player action to the game server."""
@@ -210,107 +206,129 @@ def game_network_thread(sock: socket.socket):
 
 #  This thread listens for messages from the LOBBY
 def lobby_network_thread(sock: socket.socket):
+    """
+    This thread handles BOTH sending (from a queue)
+    and receiving (from the socket) for the lobby.
+    """
     global g_running, g_lobby_data, g_room_data, g_invite_popup
     global g_client_state, g_game_socket, g_my_role
     logging.info("Lobby network thread started.")
     
     while g_running:
         try:
-            data_bytes = protocol.recv_msg(sock)
-            if data_bytes is None:
-                if g_running:
-                    logging.warning("Lobby server disconnected.")
+            # Use select to wait for readability OR a short timeout
+            # lets us check the send queue often
+            readable, _, exceptional = select.select([sock], [], [sock], 0.1)
+
+            if exceptional:
+                logging.error("Lobby socket exception.")
                 break
-            
-            msg = json.loads(data_bytes.decode('utf-8'))
-            msg_type = msg.get("type")
-            
-            # Handle messages from lobby
-            if msg_type == "ROOM_UPDATE":
-                with g_state_lock:
-                    g_room_data = msg
-                    
-            elif msg_type == "INVITE_RECEIVED":
-                with g_state_lock:
-                    g_invite_popup = msg # {"from_user": ..., "room_id": ...}
-                    
-            elif msg_type == "GAME_START":
-                # This is the HAND-OFF!
-                host = msg.get("host")
-                port = msg.get("port")
-                logging.info(f"Hand-off received. Connecting to game at {host}:{port}")
+
+            # 1. Check for messages to RECEIVE
+            if sock in readable:
+                data_bytes = protocol.recv_msg(sock)
+                if data_bytes is None:
+                    if g_running: logging.warning("Lobby server disconnected.")
+                    break
                 
-                try:
-                    # 1. Connect to new game server
-                    game_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    game_sock.connect((host, port))
-                    
-                    # 2. Receive WELCOME
-                    welcome_bytes = protocol.recv_msg(game_sock)
-                    if not welcome_bytes:
-                        raise Exception("Game server disconnected")
-                    
-                    welcome_msg = json.loads(welcome_bytes.decode('utf-8'))
-                    if welcome_msg.get("type") == "WELCOME":
-                        with g_state_lock:
-                            g_my_role = welcome_msg.get("role")
-                            g_game_socket = game_sock
-                            
-                        # 3. Start the game network thread
-                        threading.Thread(
-                            target=game_network_thread,
-                            args=(g_game_socket,),
-                            daemon=True
-                        ).start()
-                        
-                        # 4. Change state
-                        with g_state_lock:
-                            g_client_state = "GAME"
-                        
-                        # 5. This lobby thread is done.
-                        logging.info(f"Hand-off complete. My role: {g_my_role}.")
-                        break
-                    
-                    else:
-                        raise Exception("Did not receive WELCOME from game server")
-                        
-                except Exception as e:
-                    logging.error(f"Game hand-off failed: {e}")
-                    with g_state_lock:
-                        g_client_state = "LOBBY" # Go back to lobby
-                        g_error_message = "Failed to connect to game."
-
-            # We also get normal responses here
-            elif msg.get("status") == "ok":
-                reason = msg.get('reason')
-                if reason:
-                    logging.info(f"Lobby OK: {reason}")
-
-                if msg.get("reason") == "login_successful":
-                    with g_state_lock:
-                        g_client_state = "LOBBY"
-                        g_error_message = None
-                    # Now that we're in, refresh the lists
-                    send_to_lobby({"action": "list_rooms"})
-                    send_to_lobby({"action": "list_users"})
-
-                # Handle room list response
-                if "rooms" in msg:
-                    with g_state_lock:
-                        g_lobby_data["rooms"] = msg["rooms"]
-                # Handle user list response
-                if "users" in msg:
-                    with g_state_lock:
-                        g_lobby_data["users"] = msg["users"]
+                # --- Process the received message (this logic is the same as before) ---
+                msg = json.loads(data_bytes.decode('utf-8'))
+                msg_type = msg.get("type")
             
-            elif msg.get("status") == "error":
-                logging.warning(f"Lobby Error: {msg.get('reason')}")
-                with g_state_lock:
-                    g_error_message = msg.get('reason')
+                if msg_type == "ROOM_UPDATE":
+                    with g_state_lock:
+                        g_room_data = msg
+                        
+                elif msg_type == "INVITE_RECEIVED":
+                    with g_state_lock:
+                        g_invite_popup = msg # {"from_user": ..., "room_id": ...}
+                        
+                elif msg_type == "GAME_START":
+                    # This is the HAND-OFF!
+                    host = msg.get("host")
+                    port = msg.get("port")
+                    logging.info(f"Hand-off received. Connecting to game at {host}:{port}")
+                    
+                    try:
+                        # 1. Connect to new game server
+                        game_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                        game_sock.connect((host, port))
+                        
+                        # 2. Receive WELCOME
+                        welcome_bytes = protocol.recv_msg(game_sock)
+                        if not welcome_bytes:
+                            raise Exception("Game server disconnected")
+                        
+                        welcome_msg = json.loads(welcome_bytes.decode('utf-8'))
+                        if welcome_msg.get("type") == "WELCOME":
+                            with g_state_lock:
+                                g_my_role = welcome_msg.get("role")
+                                g_game_socket = game_sock
+                                
+                            # 3. Start the game network thread
+                            threading.Thread(
+                                target=game_network_thread,
+                                args=(g_game_socket,),
+                                daemon=True
+                            ).start()
+                            
+                            # 4. Change state
+                            with g_state_lock:
+                                g_client_state = "GAME"
+                            
+                            # 5. This lobby thread is done.
+                            logging.info(f"Hand-off complete. My role: {g_my_role}.")
+                            break
+                        
+                        else:
+                            raise Exception("Did not receive WELCOME from game server")
+                            
+                    except Exception as e:
+                        logging.error(f"Game hand-off failed: {e}")
+                        with g_state_lock:
+                            g_client_state = "LOBBY" # Go back to lobby
+                            g_error_message = "Failed to connect to game."
 
+                elif msg.get("status") == "ok":
+                    reason = msg.get('reason')
+                    if reason: # Only log if there *is* a reason
+                        logging.info(f"Lobby OK: {reason}")
+                    
+                    if reason == "login_successful":
+                        with g_state_lock:
+                            g_client_state = "LOBBY"
+                            g_error_message = None
+                        # Now that we're in, refresh the lists
+                        send_to_lobby_queue({"action": "list_rooms"})
+                        send_to_lobby_queue({"action": "list_users"})
+                    
+                    # Handle list responses
+                    if "rooms" in msg:
+                        with g_state_lock:
+                            g_lobby_data["rooms"] = msg["rooms"]
+                    if "users" in msg:
+                        with g_state_lock:
+                            g_lobby_data["users"] = msg["users"]
+                
+                elif msg.get("status") == "error":
+                    logging.warning(f"Lobby Error: {msg.get('reason')}")
+                    with g_state_lock:
+                        g_error_message = msg.get('reason')
+
+            # 2. Check for messages to SEND
+            try:
+                while not g_lobby_send_queue.empty():
+                    request = g_lobby_send_queue.get_nowait()
+                    json_bytes = json.dumps(request).encode('utf-8')
+                    protocol.send_msg(sock, json_bytes) # Send the message
+            except queue.Empty:
+                pass # No more messages to send
+            
         except (socket.error, json.JSONDecodeError, UnicodeDecodeError) as e:
-            if g_running:
-                logging.error(f"Error in lobby network thread: {e}")
+            if g_running: logging.error(f"Error in lobby network thread: {e}")
+            break
+        except Exception as e:
+            if g_running: logging.error(f"Unexpected lobby network thread error: {e}", exc_info=True)
             break
             
     g_running = False
@@ -589,8 +607,8 @@ def main():
                         room_id = g_invite_popup['room_id']
                         g_invite_popup = None # Close popup
                         g_client_state = "IN_ROOM" # Go to room
-                    send_to_lobby({"action": "join_room", "data": {"room_id": room_id}})
-                    
+                    send_to_lobby_queue({"action": "join_room", "data": {"room_id": room_id}})
+
                 elif ui_elements["invite_decline_btn"].handle_event(event):
                     with g_state_lock:
                         g_invite_popup = None # Close popup
@@ -610,34 +628,34 @@ def main():
                     if ui_elements["login_btn"].handle_event(event):
                         user = ui_elements["user_input"].text
                         g_username = user # Store username
-                        send_to_lobby({"action": "login", "data": {"user": user, "pass": ui_elements["pass_input"].text}})
+                        send_to_lobby_queue({"action": "login", "data": {"user": user, "pass": ui_elements["pass_input"].text}})
                         with g_state_lock:
                             g_error_message = None # Clear old errors
                         
                     if ui_elements["reg_btn"].handle_event(event):
-                        send_to_lobby({"action": "register", "data": {"user": ui_elements["user_input"].text, "pass": ui_elements["pass_input"].text}})
+                        send_to_lobby_queue({"action": "register", "data": {"user": ui_elements["user_input"].text, "pass": ui_elements["pass_input"].text}})
 
                 elif g_client_state == "LOBBY":
                     if ui_elements["create_room_btn"].handle_event(event):
-                        send_to_lobby({"action": "create_room", "data": {"name": f"{g_username}'s Room"}})
+                        send_to_lobby_queue({"action": "create_room", "data": {"name": f"{g_username}'s Room"}})
                         g_client_state = "IN_ROOM" # Optimistic state change
                     
                     for room_btn in ui_elements["rooms_list"]:
                         if room_btn.handle_event(event):
-                            send_to_lobby({"action": "join_room", "data": {"room_id": room_btn.room_id}})
+                            send_to_lobby_queue({"action": "join_room", "data": {"room_id": room_btn.room_id}})
                             g_client_state = "IN_ROOM" # Optimistic state change
                     
                     for user_btn in ui_elements["users_list"]:
                         if user_btn.handle_event(event) and user_btn.is_invite:
                             logging.info(f"Inviting user: {user_btn.username}")
-                            send_to_lobby({
+                            send_to_lobby_queue({
                                 "action": "invite",
                                 "data": {"target_user": user_btn.username}
                             })
                 
                 elif g_client_state == "IN_ROOM":
                     if ui_elements["start_game_btn"].handle_event(event):
-                        send_to_lobby({"action": "start_game"})
+                        send_to_lobby_queue({"action": "start_game"})
                         # State will be changed to "GAME" by the network thread
                 
                 elif g_client_state == "GAME":
