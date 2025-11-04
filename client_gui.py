@@ -596,11 +596,21 @@ def draw_invite_popup(screen, font_small, ui_elements):
         ui_elements["invite_accept_btn"].draw(screen)
         ui_elements["invite_decline_btn"].draw(screen)
 
+import argparse
+
 def main():
+    parser = argparse.ArgumentParser(description="Tetris GUI Client")
+    parser.add_argument("--user", type=str, help="Username for automatic login")
+    parser.add_argument("--password", type=str, help="Password for automatic login")
+    parser.add_argument("--x", type=int, default=100, help="X position of the window")
+    parser.add_argument("--y", type=int, default=100, help="Y position of the window")
+    args = parser.parse_args()
+
     global g_running, g_client_state, g_lobby_socket, g_invite_popup
     global g_username, g_error_message, g_game_over_results
     
     # 1. Initialize Pygame
+    os.environ['SDL_VIDEO_WINDOW_POS'] = f"{args.x},{args.y}"
     pygame.init()
     pygame.font.init()
 
@@ -634,8 +644,17 @@ def main():
     threading.Thread(
         target=lobby_network_thread,
         args=(host, port), # Pass host and port
-        daemon=True
     ).start()
+
+    # Auto-login if credentials are provided
+    if args.user and args.password:
+        # Wait a moment for the connection to be established
+        time.sleep(1) 
+        send_to_lobby_queue({
+            "action": "login", 
+            "data": {"user": args.user, "pass": args.password}
+        })
+        g_username = args.user
 
     # 6. Main Game Loop (State Machine)
     while g_running:
