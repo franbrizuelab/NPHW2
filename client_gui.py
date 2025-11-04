@@ -408,6 +408,8 @@ def draw_board(surface, board_data, x_start, y_start, block_size):
 
 def draw_game_state(surface, font_name, state):
     surface.fill(CONFIG["COLORS"]["BACKGROUND"])
+    draw_text(surface, "Esc to exit", CONFIG["SCREEN"]["WIDTH"] - 120, 20, None, 18, CONFIG["COLORS"]["TEXT"])
+
     if state is None:
         draw_text(surface, "Connecting... Waiting for state...", 100, 100, font_name, CONFIG["FONTS"]["TITLE_SIZE"], CONFIG["COLORS"]["TEXT"])
         return
