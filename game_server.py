@@ -114,12 +114,13 @@ def process_input(game: TetrisGame, action: str):
         game.hard_drop()
 
 # UPDATE SIGNATURE
-def handle_game_end(clients: list, game_p1: TetrisGame, game_p2: TetrisGame, winner: str, p1_user: str, p2_user: str):
+def handle_game_end(clients: list, game_p1: TetrisGame, game_p2: TetrisGame, winner: str, p1_user: str, p2_user: str, room_id: int):
     """
     Handles all end-of-game logic:
     1. Builds the GameLog.
     2. Reports the log to the DB server.
     3. Sends the final GAME_OVER message to both clients.
+    4. Notifies the lobby server that the game is over.
     """
     logging.info(f"Game loop finished. Winner: {winner}")
     
@@ -159,8 +160,25 @@ def handle_game_end(clients: list, game_p1: TetrisGame, game_p2: TetrisGame, win
     except Exception as e:
         logging.warning(f"Failed to send GAME_OVER message: {e}")
 
+    # 4. Notify Lobby Server
+    notify_lobby_of_game_over(room_id)
+
+def notify_lobby_of_game_over(room_id: int):
+    """Connects to the lobby server to report that the game has ended."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.connect((config.LOBBY_HOST, config.LOBBY_PORT))
+            request = {
+                "action": "game_over",
+                "data": {"room_id": room_id}
+            }
+            protocol.send_msg(sock, json.dumps(request).encode('utf-8'))
+            logging.info(f"Notified lobby that game in room {room_id} is over.")
+    except socket.error as e:
+        logging.error(f"Could not connect to lobby server to report game over: {e}")
+
 # Runs gravity, processes inputs, and broadcasts state
-def game_loop(clients: list, input_queue: queue.Queue, game_p1: TetrisGame, game_p2: TetrisGame, p1_user: str, p2_user: str):
+def game_loop(clients: list, input_queue: queue.Queue, game_p1: TetrisGame, game_p2: TetrisGame, p1_user: str, p2_user: str, room_id: int):
     logging.info("Game loop started.")
     last_tick_time = time.time()
     winner = None
@@ -216,7 +234,7 @@ def game_loop(clients: list, input_queue: queue.Queue, game_p1: TetrisGame, game
         # Don't burn CPU
         time.sleep(0.01)
         
-    handle_game_end(clients, game_p1, game_p2, winner, p1_user, p2_user)
+    handle_game_end(clients, game_p1, game_p2, winner, p1_user, p2_user, room_id)
 
 def forward_to_db(request: dict) -> dict | None:
     """Acts as a client to the DB_Server."""
@@ -250,12 +268,14 @@ def main():
     )
     parser.add_argument('--p1', type=str, required=True, help='Username of Player 1')
     parser.add_argument('--p2', type=str, required=True, help='Username of Player 2')
+    parser.add_argument('--room_id', type=int, required=True, help='ID of the room')
     args = parser.parse_args()
     PORT = args.port
-    P1_USERNAME = args.p1 
-    P2_USERNAME = args.p2 
-
-    # TODO: erase these temporary lines
+    P1_USERNAME = args.p1
+    P2_USERNAME = args.p2
+    ROOM_ID = args.room_id
+    
+        # TODO: erase these temporary lines
     HOST = '0.0.0.0'
     game_seed = random.randint(0, 1_000_000)
 
@@ -317,7 +337,7 @@ def main():
         game_p2 = TetrisGame(game_seed)
         
         # 3. Run the main game loop
-        game_loop(clients, input_queue, game_p1, game_p2, P1_USERNAME, P2_USERNAME)
+        game_loop(clients, input_queue, game_p1, game_p2, P1_USERNAME, P2_USERNAME, ROOM_ID)
 
     except KeyboardInterrupt:
         logging.info("Shutting down game server.")
@@ -328,6 +348,5 @@ def main():
             sock.close()
         server_socket.close()
         logging.info("Game server shut down.")
-
 if __name__ == "__main__":
     main()

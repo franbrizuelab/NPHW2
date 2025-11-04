@@ -450,7 +450,8 @@ def handle_start_game(client_sock: socket.socket, username: str):
             "python3", "game_server.py", 
             "--port", str(game_port),
             "--p1", player1_name,
-            "--p2", player2_name
+            "--p2", player2_name,
+            "--room_id", str(room_id) # Add room_id to the command
         ]
         subprocess.Popen(command)
         
@@ -525,6 +526,26 @@ def handle_invite(client_sock: socket.socket, inviter_username: str, data: dict)
         # This case should be rare but good to handle
         send_to_client(client_sock, {"status": "error", "reason": "could_not_find_target_socket"})
 
+def handle_game_over(room_id: int):
+    """
+    Resets a room and its players to idle status after a game.
+    """
+    with g_room_lock:
+        room = g_rooms.get(room_id)
+        if not room or room["status"] != "playing":
+            return # Nothing to do
+
+        logging.info(f"Game over for room {room_id}. Resetting to idle.")
+        room["status"] = "idle"
+        player_list = list(room["players"]) # Copy for safe iteration
+
+    # Update player statuses
+    with g_session_lock:
+        for username in player_list:
+            session = g_client_sessions.get(username)
+            if session:
+                session["status"] = f"in_room_{room_id}" # Back to being in the room
+
 # Client Handling Thread
 
 def handle_client(client_sock: socket.socket, addr: tuple):
@@ -596,6 +617,11 @@ def handle_client(client_sock: socket.socket, addr: tuple):
                 elif action == 'invite':
                     handle_invite(client_sock, username, data)
                 
+                elif action == 'game_over':
+                    room_id = data.get('room_id')
+                    if room_id is not None:
+                        handle_game_over(room_id)
+
                 else:
                     send_to_client(client_sock, {"status": "error", "reason": f"unknown_action: {action}"})
 

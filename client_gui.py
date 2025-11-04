@@ -467,8 +467,24 @@ def draw_game_state(surface, font_name, state):
     with g_state_lock:
         if g_game_over_results: final_results = g_game_over_results
     if final_results:
-        winner_text = f"WINNER: {final_results.get('winner', 'Unknown')}"
-        draw_text(surface, winner_text, pos["GAME_OVER_TEXT"][0], pos["GAME_OVER_TEXT"][1], font_name, fonts["GAME_OVER_SIZE"], colors["GAME_OVER"])
+        winner = final_results.get('winner', 'Unknown')
+        winner_text = f"WINNER: {winner}"
+        p1_score = final_results.get("p1_results", {}).get("score", 0)
+        p2_score = final_results.get("p2_results", {}).get("score", 0)
+        score_text = f"Final Score: {p1_score} vs {p2_score}"
+
+        reason = ""
+        if my_state.get("game_over", False):
+            reason = "Your board is full!"
+        elif opponent_state.get("game_over", False):
+            reason = "Opponent's board is full!"
+
+        draw_text(surface, "GAME OVER", pos["GAME_OVER_TEXT"][0], pos["GAME_OVER_TEXT"][1] - 60, font_name, fonts["GAME_OVER_SIZE"], colors["GAME_OVER"])
+        draw_text(surface, winner_text, pos["GAME_OVER_TEXT"][0], pos["GAME_OVER_TEXT"][1], font_name, fonts["TITLE_SIZE"], colors["TEXT"])
+        draw_text(surface, score_text, pos["GAME_OVER_TEXT"][0], pos["GAME_OVER_TEXT"][1] + 40, font_name, fonts["SCORE_SIZE"], colors["TEXT"])
+        draw_text(surface, reason, pos["GAME_OVER_TEXT"][0], pos["GAME_OVER_TEXT"][1] + 80, font_name, fonts["SCORE_SIZE"], colors["TEXT"])
+        ui_elements["back_to_lobby_btn"].draw(surface) # Draw the button
+
     elif my_state.get("game_over", False):
         draw_text(surface, "GAME OVER", pos["GAME_OVER_TEXT"][0], pos["GAME_OVER_TEXT"][1], font_name, fonts["GAME_OVER_SIZE"], colors["GAME_OVER"])
 
@@ -582,7 +598,7 @@ def draw_invite_popup(screen, font_small, ui_elements):
 
 def main():
     global g_running, g_client_state, g_lobby_socket, g_invite_popup
-    global g_username, g_error_message
+    global g_username, g_error_message, g_game_over_results
     
     # 1. Initialize Pygame
     pygame.init()
@@ -608,6 +624,7 @@ def main():
         "users_list": [],
         "invite_accept_btn": Button(300, 350, 140, 40, font_small, "Accept"),
         "invite_decline_btn": Button(460, 350, 140, 40, font_small, "Decline"),
+        "back_to_lobby_btn": Button(350, 400, 200, 50, font_small, "Back to Lobby"),
     }
     
     # 4. Start the lobby network thread
@@ -709,6 +726,12 @@ def main():
                         elif event.key == pygame.K_ESCAPE: 
                             if g_game_socket:
                                 g_game_socket.close() # This will trigger the game_network_thread to exit
+                    
+                    if game_is_over:
+                        if ui_elements["back_to_lobby_btn"].handle_event(event):
+                            with g_state_lock:
+                                g_client_state = "LOBBY"
+                                g_game_over_results = None # Reset for next game
         
         # Render Graphics
         if current_client_state == "CONNECTING":
