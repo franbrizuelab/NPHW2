@@ -383,6 +383,53 @@ def handle_join_room(client_sock: socket.socket, username: str, data: dict):
             if player_session:
                 send_to_client(player_session["sock"], room_update_msg)
 
+def handle_leave_room(username: str):
+    """Handles a user leaving a room."""
+    room_id = None
+    with g_session_lock:
+        session = g_client_sessions.get(username)
+        if session and session["status"].startswith("in_room_"):
+            try:
+                room_id = int(session["status"].split('_')[-1])
+            except (ValueError, IndexError):
+                pass
+
+    if room_id is None:
+        return # User is not in a room
+
+    with g_room_lock:
+        room = g_rooms.get(room_id)
+        if not room:
+            return # Room doesn't exist
+
+        if username in room["players"]:
+            room["players"].remove(username)
+
+        # If the host leaves, or the room becomes empty, delete it
+        if room["host"] == username or not room["players"]:
+            del g_rooms[room_id]
+            logging.info(f"Room {room_id} closed by host {username}.")
+            # Notify remaining players that the room was closed
+            # (This is a good place to send a specific notification)
+        else:
+            # Notify remaining players of the updated room state
+            room_update_msg = {
+                "type": "ROOM_UPDATE",
+                "room_id": room_id,
+                "players": room["players"],
+                "host": room.get("host")
+            }
+            with g_session_lock:
+                for player_name in room["players"]:
+                    player_session = g_client_sessions.get(player_name)
+                    if player_session:
+                        send_to_client(player_session["sock"], room_update_msg)
+
+    with g_session_lock:
+        session = g_client_sessions.get(username)
+        if session:
+            session["status"] = "online"
+
 def handle_start_game(client_sock: socket.socket, username: str):
     """
     Handles 'start_game' action.
@@ -613,6 +660,9 @@ def handle_client(client_sock: socket.socket, addr: tuple):
                 
                 elif action == 'join_room':
                     handle_join_room(client_sock, username, data)
+
+                elif action == 'leave_room':
+                    handle_leave_room(username)
                 
                 elif action == 'invite':
                     handle_invite(client_sock, username, data)

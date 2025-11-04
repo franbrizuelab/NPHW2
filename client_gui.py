@@ -544,6 +544,8 @@ def draw_lobby_screen(screen, font_small, font_large, ui_elements):
 def draw_room_screen(screen, font_small, font_large, ui_elements):
     screen.fill(CONFIG["COLORS"]["BACKGROUND"])
     
+    draw_text(screen, "Esc to exit", CONFIG["SCREEN"]["WIDTH"] - 120, 20, None, 18, CONFIG["COLORS"]["TEXT"])
+
     with g_state_lock:
         room_name = g_room_data.get("name", "Room")
         players = g_room_data.get("players", [])
@@ -728,6 +730,11 @@ def main():
                             })
                 
                 elif current_client_state == "IN_ROOM":
+                    if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                        send_to_lobby_queue({"action": "leave_room"})
+                        with g_state_lock:
+                            g_client_state = "LOBBY"
+
                     if ui_elements["start_game_btn"].handle_event(event):
                         send_to_lobby_queue({"action": "start_game"})
                         # State will be changed to "GAME" by the network thread
