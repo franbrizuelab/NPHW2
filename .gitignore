@@ -2,3 +2,4 @@ test_db_client.py
 common/config.py
 storage/users.json
 storage/gamelogs.json
+test_pieces.py

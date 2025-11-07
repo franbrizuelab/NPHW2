@@ -37,6 +37,7 @@ CONFIG = {
     "TIMING": {"FPS": 30},
     "SCREEN": {"WIDTH": 900, "HEIGHT": 700},
     "SIZES": {"BLOCK_SIZE": 30, "SMALL_BLOCK_SIZE": 15},
+    "STYLE": {"CORNER_RADIUS": 5},
     "COLORS": {
         "BACKGROUND": (20, 20, 30),
         "GRID_LINES": (40, 40, 50),
@@ -74,6 +75,36 @@ CONFIG = {
         "PORT": config.LOBBY_PORT
     }
 }
+
+# --- Block Rendering Logic ---
+g_gradient_cache = {}
+
+def get_gradient_block(size, color):
+    corner_radius = CONFIG["STYLE"]["CORNER_RADIUS"]
+    cache_key = (size[0], size[1], color[0], color[1], color[2], corner_radius)
+    if cache_key in g_gradient_cache:
+        return g_gradient_cache[cache_key]
+
+    block_surface = pygame.Surface(size, pygame.SRCALPHA)
+    pygame.draw.rect(block_surface, (255, 255, 255), block_surface.get_rect(), 0, border_radius=corner_radius)
+    
+    border_width = 1
+    inset_rect = block_surface.get_rect().inflate(-border_width * 2, -border_width * 2)
+
+    dark_color = tuple(c * 0.8 for c in color)
+    light_color = (220, 220, 220)
+    
+    for y in range(inset_rect.height):
+        for x in range(inset_rect.width):
+            factor = ((x / inset_rect.width) + (y / inset_rect.height)) / 2.5
+            pixel_color = tuple(
+                int(start + (end - start) * factor)
+                for start, end in zip(dark_color, light_color)
+            )
+            block_surface.set_at((inset_rect.left + x, inset_rect.top + y), pixel_color)
+
+    g_gradient_cache[cache_key] = block_surface
+    return block_surface
 
 # UI helper classes
 class TextInput:
@@ -124,6 +155,8 @@ class Button:
         text_surf = self.font.render(self.text, True, CONFIG["COLORS"]["TEXT"])
         text_rect = text_surf.get_rect(center=self.rect.center)
         screen.blit(text_surf, text_rect)
+
+
 
 # Global state
 g_state_lock = threading.Lock()
@@ -439,7 +472,7 @@ def draw_text(surface, text, x, y, font, size, color):
 def draw_board(surface, board_data, x_start, y_start, block_size):
     num_rows = len(board_data); num_cols = len(board_data[0])
     colors = CONFIG["COLORS"]["PIECE_COLORS"]; grid_color = CONFIG["COLORS"]["GRID_LINES"]
-    border_width = 2 # Define border width
+    
     for r in range(num_rows):
         for c in range(num_cols):
             color_id = board_data[r][c]
@@ -447,15 +480,10 @@ def draw_board(surface, board_data, x_start, y_start, block_size):
             
             if color_id != 0:
                 block_color = colors[color_id] if 0 <= color_id < len(colors) else (255, 255, 255)
-                darker_color = tuple(max(0, component - 70) for component in block_color)
-                
-                # Draw the border as the background
-                pygame.draw.rect(surface, darker_color, rect, 0)
-                # Draw the main block color inset
-                inset_rect = rect.inflate(-border_width * 2, -border_width * 2)
-                pygame.draw.rect(surface, block_color, inset_rect, 0)
+                block_surface = get_gradient_block((block_size, block_size), block_color)
+                surface.blit(block_surface, rect.topleft)
             else:
-                # For empty cells, just draw the faint grid line
+                # For empty cells, draw the faint grid line
                 pygame.draw.rect(surface, grid_color, rect, 1)
 
 def draw_game_state(surface, font_name, state):
@@ -481,17 +509,10 @@ def draw_game_state(surface, font_name, state):
     if my_piece:
         shape_id = my_piece.get("shape_id", 0) + 1
         block_color = colors["PIECE_COLORS"][shape_id]
-        darker_color = tuple(max(0, component - 70) for component in block_color)
-        border_width = 2
-
+        block_surface = get_gradient_block((sizes["BLOCK_SIZE"], sizes["BLOCK_SIZE"]), block_color)
         for y, x in my_piece.get("blocks", []):
             if y >= 0:
-                rect = pygame.Rect(pos["MY_BOARD"][0] + x * sizes["BLOCK_SIZE"], pos["MY_BOARD"][1] + y * sizes["BLOCK_SIZE"], sizes["BLOCK_SIZE"], sizes["BLOCK_SIZE"])
-                
-                # Draw border and inset block
-                pygame.draw.rect(surface, darker_color, rect, 0)
-                inset_rect = rect.inflate(-border_width * 2, -border_width * 2)
-                pygame.draw.rect(surface, block_color, inset_rect, 0)
+                surface.blit(block_surface, (pos["MY_BOARD"][0] + x * sizes["BLOCK_SIZE"], pos["MY_BOARD"][1] + y * sizes["BLOCK_SIZE"]))
 
     opp_board = opponent_state.get("board")
     if opp_board:
@@ -501,10 +522,10 @@ def draw_game_state(surface, font_name, state):
     if opp_piece:
         shape_id = opp_piece.get("shape_id", 0) + 1
         block_color = colors["PIECE_COLORS"][shape_id]
+        block_surface = get_gradient_block((sizes["SMALL_BLOCK_SIZE"], sizes["SMALL_BLOCK_SIZE"]), block_color)
         for y, x in opp_piece.get("blocks", []):
             if y >= 0:
-                rect = (pos["OPPONENT_BOARD"][0] + x * sizes["SMALL_BLOCK_SIZE"], pos["OPPONENT_BOARD"][1] + y * sizes["SMALL_BLOCK_SIZE"], sizes["SMALL_BLOCK_SIZE"], sizes["SMALL_BLOCK_SIZE"])
-                pygame.draw.rect(surface, block_color, rect, 0)
+                surface.blit(block_surface, (pos["OPPONENT_BOARD"][0] + x * sizes["SMALL_BLOCK_SIZE"], pos["OPPONENT_BOARD"][1] + y * sizes["SMALL_BLOCK_SIZE"]))
 
     # --- Score and Lines Display ---
     font_obj = pygame.font.Font(font_name, fonts["SCORE_SIZE"])
@@ -534,25 +555,18 @@ def draw_game_state(surface, font_name, state):
         # Define new position and size for the next piece display
         next_piece_pos_x = pos["NEXT_PIECE"][0] + 20 # Move it right
         next_piece_block_size = int(sizes["BLOCK_SIZE"] * 0.85) # 15% smaller
-        border_width = 1 # Thinner border for smaller preview
 
         draw_text(surface, "NEXT", next_piece_pos_x, pos["NEXT_PIECE"][1], font_name, fonts["SCORE_SIZE"], colors["TEXT"])
         
         shape_id = next_piece.get("shape_id", 0) + 1
         block_color = colors["PIECE_COLORS"][shape_id]
-        darker_color = tuple(max(0, component - 70) for component in block_color)
+        block_surface = get_gradient_block((next_piece_block_size, next_piece_block_size), block_color)
 
         for r, c in next_piece.get("blocks", []):
             # Use the new size and position for drawing
-            rect = pygame.Rect(next_piece_pos_x + (c-2) * next_piece_block_size, 
-                               pos["NEXT_PIECE"][1] + (r+2) * next_piece_block_size, 
-                               next_piece_block_size, 
-                               next_piece_block_size)
-            
-            # Draw border and inset block
-            pygame.draw.rect(surface, darker_color, rect, 0)
-            inset_rect = rect.inflate(-border_width * 2, -border_width * 2)
-            pygame.draw.rect(surface, block_color, inset_rect, 0)
+            topleft = (next_piece_pos_x + (c-2) * next_piece_block_size, 
+                       pos["NEXT_PIECE"][1] + (r+2) * next_piece_block_size)
+            surface.blit(block_surface, topleft)
 
     final_results = None
     with g_state_lock:
