@@ -281,13 +281,22 @@ def lobby_network_thread(host: str, port: int):
                     break
                 
                 msg = json.loads(data_bytes.decode('utf-8'))
-                logging.info(f"(From lobby): {msg}") # Log the received message
+                logging.info(f"(lobby): {msg}") # Log the received message
                 msg_type = msg.get("type")
             
                 if msg_type == "ROOM_UPDATE":
                     with g_state_lock:
                         g_room_data = msg
                         g_client_state = "IN_ROOM"
+
+                elif msg_type == "KICKED_FROM_ROOM":
+                    logging.info("KICKED MESSAGE RECEIVED!")
+                    with g_state_lock:
+                        g_client_state = "LOBBY"
+                        g_room_data = {"id": None, "host": None, "players": []} # Reset room data
+                    # Refresh lists now that we're back in the lobby
+                    send_to_lobby_queue({"action": "list_rooms"})
+                    send_to_lobby_queue({"action": "list_users"})
                         
                 elif msg_type == "INVITE_RECEIVED":
                     with g_state_lock:
@@ -379,7 +388,7 @@ def lobby_network_thread(host: str, port: int):
                     request = g_lobby_send_queue.get_nowait()
                     json_bytes = json.dumps(request).encode('utf-8')
                     protocol.send_msg(sock, json_bytes) # Send the message
-                    logging.info(f"Message sent {request}")
+                    logging.info(f"rq: {request}")
             except queue.Empty:
                 pass # No more messages to send
             
@@ -765,7 +774,7 @@ def main():
                     if ui_elements["create_room_btn"].handle_event(event):
                         send_to_lobby_queue({"action": "create_room", "data": {"name": f"{g_username}'s Room"}})
                         with g_state_lock:
-                            g_client_state = "IN_ROOM" # Optimistic state change
+                            g_client_state = "IN_ROOM" # Optimistesic state change
                     
                     for room_btn in ui_elements["rooms_list"]:
                         if room_btn.handle_event(event):
@@ -781,6 +790,7 @@ def main():
                                 "data": {"target_user": user_btn.username}
                             })
                 
+                # rrrrr
                 elif current_client_state == "IN_ROOM":
                     if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                         send_to_lobby_queue({"action": "leave_room"})

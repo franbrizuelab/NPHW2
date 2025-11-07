@@ -407,10 +407,23 @@ def handle_leave_room(username: str):
 
         # If the host leaves, or the room becomes empty, delete it
         if room["host"] == username or not room["players"]:
+            remaining_players = list(room["players"]) # Make a copy
+            logging.info(f"Host {username} is leaving room {room_id}. Notifying {remaining_players}.")
+
+            # Notify remaining players FIRST, before deleting the room
+            kick_msg = {"type": "KICKED_FROM_ROOM", "reason": "The host has left the room."}
+            with g_session_lock:
+                for player_name in remaining_players:
+                    player_session = g_client_sessions.get(player_name)
+                    if player_session:
+                        send_to_client(player_session["sock"], kick_msg)
+                        player_session["status"] = "online"
+            
+
+            time.sleep(10) # Let's see if the other user leaves the room
+            # THEN, delete the room
             del g_rooms[room_id]
-            logging.info(f"Room {room_id} closed by host {username}.")
-            # Notify remaining players that the room was closed
-            # (This is a good place to send a specific notification)
+            logging.info(f"Room {room_id} closed.")
         else:
             # Notify remaining players of the updated room state
             room_update_msg = {
@@ -677,8 +690,9 @@ def handle_client(client_sock: socket.socket, addr: tuple):
                 
                 elif action == 'join_room':
                     handle_join_room(client_sock, username, data)
-
+                # rrrrr
                 elif action == 'leave_room':
+                    logging.info(f"{username} leaving room via action")
                     handle_leave_room(username)
                 
                 elif action == 'invite':
