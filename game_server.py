@@ -61,6 +61,8 @@ def handle_client(sock: socket.socket, player_id: int, input_queue: queue.Queue)
                     if action:
                         # Put the input into the queue for the main loop
                         input_queue.put((player_id, action))
+                elif request.get("type") == "FORFEIT":
+                    input_queue.put((player_id, "FORFEIT"))
                 
             except (json.JSONDecodeError, UnicodeDecodeError) as e:
                 logging.warning(f"Invalid JSON from Player {player_id + 1}: {e}")
@@ -183,6 +185,13 @@ def game_loop(clients: list, input_queue: queue.Queue, game_p1: TetrisGame, game
                     game_p1.game_over = True # Force end
                     game_p2.game_over = True # Force end
                     break # Exit input processing loop
+
+                if action == "FORFEIT":
+                    logging.info(f"Player {player_id + 1} forfeited. Ending game.")
+                    winner = "P2" if player_id == 0 else "P1"
+                    game_p1.game_over = True
+                    game_p2.game_over = True
+                    break
 
                 if player_id == 0:
                     process_input(game_p1, action)
