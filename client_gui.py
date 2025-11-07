@@ -29,7 +29,8 @@ except ImportError:
     sys.exit(1)
 
 # Logging
-logging.basicConfig(level=logging.INFO, format='[CLIENT_GUI] %(asctime)s - %(message)s')
+# logging.basicConfig(level=logging.INFO, format='[CLIENT_GUI] %(asctime)s - %(message)s')
+logging.basicConfig(level=logging.DEBUG, format='%(levelname)s: %(message)s')
 
 # Customization Configuration
 CONFIG = {
@@ -185,6 +186,11 @@ def game_network_thread(sock: socket.socket):
                     logging.info(f"Game over! Results: {snapshot}")
                     with g_state_lock:
                         g_game_over_results = snapshot
+                        if g_my_role == "P1": # Only the host notifies the lobby
+                            send_to_lobby_queue({
+                                "action": "game_over",
+                                "data": {"room_id": snapshot.get("room_id")}
+                            })
                     break # Game is over, stop this thread
 
             # 2. Check for messages to SEND
@@ -203,6 +209,7 @@ def game_network_thread(sock: socket.socket):
         logging.info("Game network thread exiting.")
         with g_state_lock:
             # Reset all game state and return to lobby
+            #logging.info("Setting back state to 'LOBBY'.")
             g_client_state = "LOBBY"
             if g_game_socket:
                 g_game_socket.close()
@@ -213,6 +220,7 @@ def game_network_thread(sock: socket.socket):
             # Refresh lobby lists now that we're back
             send_to_lobby_queue({"action": "list_rooms"})
             send_to_lobby_queue({"action": "list_users"})
+            #logging.info("State switched back to 'LOBBY'.")
 
 def lobby_network_thread(host: str, port: int):
     """
@@ -247,7 +255,14 @@ def lobby_network_thread(host: str, port: int):
         last_refresh_time = time.time()
         
         # 2. Main send/receive loop for the lobby
-        while g_running and g_client_state != "GAME":
+        while g_running:
+            # If the client is in the GAME state, this thread should pause
+            # and let the game_network_thread handle things.
+            with g_state_lock:
+                if g_client_state == "GAME":
+                    #time.sleep(0.5) # Sleep to prevent busy-waiting
+                    continue # Skip to the next loop iteration
+
             # Use select to wait for readability OR a short timeout
             readable, _, exceptional = select.select([sock], [], [sock], 0.1)
 
@@ -266,6 +281,7 @@ def lobby_network_thread(host: str, port: int):
                     break
                 
                 msg = json.loads(data_bytes.decode('utf-8'))
+                logging.info(f"(From lobby): {msg}") # Log the received message
                 msg_type = msg.get("type")
             
                 if msg_type == "ROOM_UPDATE":
@@ -310,9 +326,9 @@ def lobby_network_thread(host: str, port: int):
                             with g_state_lock:
                                 g_client_state = "GAME"
                             
-                            # 5. This lobby thread is done.
+                            # 5. The game thread is now in control. This thread will pause.
                             logging.info(f"Hand-off complete. My role: {g_my_role}.")
-                            break # Exit lobby loop
+                            # DO NOT break. The loop will now pause until the game is over.
                         
                         else:
                             raise Exception("Did not receive WELCOME from game server")
@@ -344,6 +360,14 @@ def lobby_network_thread(host: str, port: int):
                         with g_state_lock:
                             g_lobby_data["users"] = msg["users"]
                 
+                elif "rooms" in msg:
+                    with g_state_lock:
+                        g_lobby_data["rooms"] = msg["rooms"]
+                
+                elif "users" in msg:
+                    with g_state_lock:
+                        g_lobby_data["users"] = msg["users"]
+                
                 elif msg.get("status") == "error":
                     logging.warning(f"Lobby Error: {msg.get('reason')}")
                     with g_state_lock:
@@ -355,19 +379,22 @@ def lobby_network_thread(host: str, port: int):
                     request = g_lobby_send_queue.get_nowait()
                     json_bytes = json.dumps(request).encode('utf-8')
                     protocol.send_msg(sock, json_bytes) # Send the message
+                    logging.info(f"Message sent {request}")
             except queue.Empty:
                 pass # No more messages to send
             
             # 3. Check for periodic refresh
             current_time = time.time()
-            if (current_time - last_refresh_time > 5):
-                # Every 5 seconds, refresh lists IF we are in the lobby
+            if (current_time - last_refresh_time > 2):
+                # Every 2 seconds, refresh lists IF we are in the lobby
+                #logging.info(f"Periodic refresh check. Current state: '{g_client_state}'")
                 with g_state_lock:
                     is_in_lobby = (g_client_state == "LOBBY")
                 
                 if is_in_lobby:
                     send_to_lobby_queue({"action": "list_rooms"})
                     send_to_lobby_queue({"action": "list_users"})
+                    logging.info(f"Updating room & users list")
                     
                 last_refresh_time = current_time
             
@@ -408,6 +435,8 @@ def draw_board(surface, board_data, x_start, y_start, block_size):
 
 def draw_game_state(surface, font_name, state):
     surface.fill(CONFIG["COLORS"]["BACKGROUND"])
+    draw_text(surface, "Esc to exit", CONFIG["SCREEN"]["WIDTH"] - 120, 20, None, 18, CONFIG["COLORS"]["TEXT"])
+
     if state is None:
         draw_text(surface, "Connecting... Waiting for state...", 100, 100, font_name, CONFIG["FONTS"]["TITLE_SIZE"], CONFIG["COLORS"]["TEXT"])
         return
