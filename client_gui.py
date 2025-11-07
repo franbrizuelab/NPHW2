@@ -484,12 +484,28 @@ def draw_game_state(surface, font_name, state):
                 rect = (pos["OPPONENT_BOARD"][0] + x * sizes["SMALL_BLOCK_SIZE"], pos["OPPONENT_BOARD"][1] + y * sizes["SMALL_BLOCK_SIZE"], sizes["SMALL_BLOCK_SIZE"], sizes["SMALL_BLOCK_SIZE"])
                 pygame.draw.rect(surface, block_color, rect, 0)
 
+    # --- Score and Lines Display ---
+    font_obj = pygame.font.Font(font_name, fonts["SCORE_SIZE"])
+    
+    # My Score (Label left, Value right)
+    my_right_edge = pos["MY_SCORE"][0] + 160
     draw_text(surface, "SCORE", pos["MY_SCORE"][0], pos["MY_SCORE"][1], font_name, fonts["SCORE_SIZE"], colors["TEXT"])
-    draw_text(surface, str(my_state.get("score", 0)), pos["MY_SCORE"][0], pos["MY_SCORE"][1] + 25, font_name, fonts["SCORE_SIZE"], colors["TEXT"])
+    score_surf = font_obj.render(str(my_state.get("score", 0)), True, colors["TEXT"])
+    score_rect = score_surf.get_rect(topright=(my_right_edge, pos["MY_SCORE"][1]))
+    surface.blit(score_surf, score_rect)
+
+    # My Lines (Label left, Value right)
     draw_text(surface, "LINES", pos["MY_LINES"][0], pos["MY_LINES"][1], font_name, fonts["SCORE_SIZE"], colors["TEXT"])
-    draw_text(surface, str(my_state.get("lines", 0)), pos["MY_LINES"][0], pos["MY_LINES"][1] + 25, font_name, fonts["SCORE_SIZE"], colors["TEXT"])
+    lines_surf = font_obj.render(str(my_state.get("lines", 0)), True, colors["TEXT"])
+    lines_rect = lines_surf.get_rect(topright=(my_right_edge, pos["MY_LINES"][1]))
+    surface.blit(lines_surf, lines_rect)
+
+    # Opponent Score (Label left, Value right-aligned below)
+    opp_right_edge = pos["OPPONENT_BOARD"][0] + (sizes["SMALL_BLOCK_SIZE"] * 10)
     draw_text(surface, "OPPONENT", pos["OPPONENT_SCORE"][0], pos["OPPONENT_SCORE"][1], font_name, fonts["SCORE_SIZE"], colors["TEXT"])
-    draw_text(surface, str(opponent_state.get("score", 0)), pos["OPPONENT_SCORE"][0], pos["OPPONENT_SCORE"][1] + 25, font_name, fonts["SCORE_SIZE"], colors["TEXT"])
+    opp_score_surf = font_obj.render(str(opponent_state.get("score", 0)), True, colors["TEXT"])
+    opp_score_rect = opp_score_surf.get_rect(topright=(opp_right_edge, pos["OPPONENT_SCORE"][1] + 25))
+    surface.blit(opp_score_surf, opp_score_rect)
 
     next_piece = my_state.get("next_piece")
     if next_piece:
