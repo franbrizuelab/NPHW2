@@ -47,6 +47,7 @@ CONFIG = {
         "INPUT_TEXT": (200, 200, 200),
         "INPUT_ACTIVE": (50, 50, 70),
         "ERROR": (200, 50, 50),
+        "USER_LIST_BACKGROUND": (50, 50, 60),
         "PIECE_COLORS": [
             (0, 0, 0), (0, 255, 255), (255, 255, 0), (128, 0, 128),
             (0, 0, 255), (255, 165, 0), (0, 255, 0), (255, 0, 0)
@@ -60,7 +61,9 @@ CONFIG = {
     },
     "FONTS": {
         "DEFAULT_FONT": None, "TITLE_SIZE": 30,
-        "SCORE_SIZE": 24, "GAME_OVER_SIZE": 50
+        "SCORE_SIZE": 24, "GAME_OVER_SIZE": 50,
+        "PIXEL_FONT": "assets/fonts/PressStart2P-Regular.ttf",
+        "PIXEL_FONT_SIZE": 16
     },
     "NETWORK": {
         "HOST": config.LOBBY_HOST,
@@ -386,9 +389,8 @@ def lobby_network_thread(host: str, port: int):
     # If state is GAME, the game thread is now in control
 
 # Drawing Functions
-def draw_text(surface, text, x, y, font, size, color):
+def draw_text(surface, text, x, y, font_obj, color):
     try:
-        font_obj = pygame.font.Font(font, size)
         text_surface = font_obj.render(text, True, color)
         surface.blit(text_surface, (x, y))
     except Exception:
@@ -409,7 +411,7 @@ def draw_board(surface, board_data, x_start, y_start, block_size):
 def draw_game_state(surface, font_name, state):
     surface.fill(CONFIG["COLORS"]["BACKGROUND"])
     if state is None:
-        draw_text(surface, "Connecting... Waiting for state...", 100, 100, font_name, CONFIG["FONTS"]["TITLE_SIZE"], CONFIG["COLORS"]["TEXT"])
+        draw_text(surface, "Connecting... Waiting for state...", 100, 100, pygame.font.Font(font_name, CONFIG["FONTS"]["TITLE_SIZE"]), CONFIG["COLORS"]["TEXT"])
         return
 
     pos = CONFIG["POSITIONS"]; colors = CONFIG["COLORS"]; sizes = CONFIG["SIZES"]; fonts = CONFIG["FONTS"]
@@ -446,16 +448,16 @@ def draw_game_state(surface, font_name, state):
                 rect = (pos["OPPONENT_BOARD"][0] + x * sizes["SMALL_BLOCK_SIZE"], pos["OPPONENT_BOARD"][1] + y * sizes["SMALL_BLOCK_SIZE"], sizes["SMALL_BLOCK_SIZE"], sizes["SMALL_BLOCK_SIZE"])
                 pygame.draw.rect(surface, block_color, rect, 0)
 
-    draw_text(surface, "SCORE", pos["MY_SCORE"][0], pos["MY_SCORE"][1], font_name, fonts["SCORE_SIZE"], colors["TEXT"])
-    draw_text(surface, str(my_state.get("score", 0)), pos["MY_SCORE"][0], pos["MY_SCORE"][1] + 25, font_name, fonts["SCORE_SIZE"], colors["TEXT"])
-    draw_text(surface, "LINES", pos["MY_LINES"][0], pos["MY_LINES"][1], font_name, fonts["SCORE_SIZE"], colors["TEXT"])
-    draw_text(surface, str(my_state.get("lines", 0)), pos["MY_LINES"][0], pos["MY_LINES"][1] + 25, font_name, fonts["SCORE_SIZE"], colors["TEXT"])
-    draw_text(surface, "OPPONENT", pos["OPPONENT_SCORE"][0], pos["OPPONENT_SCORE"][1], font_name, fonts["SCORE_SIZE"], colors["TEXT"])
-    draw_text(surface, str(opponent_state.get("score", 0)), pos["OPPONENT_SCORE"][0], pos["OPPONENT_SCORE"][1] + 25, font_name, fonts["SCORE_SIZE"], colors["TEXT"])
+    draw_text(surface, "SCORE", pos["MY_SCORE"][0], pos["MY_SCORE"][1], pygame.font.Font(font_name, fonts["SCORE_SIZE"]), colors["TEXT"])
+    draw_text(surface, str(my_state.get("score", 0)), pos["MY_SCORE"][0], pos["MY_SCORE"][1] + 25, pygame.font.Font(font_name, fonts["SCORE_SIZE"]), colors["TEXT"])
+    draw_text(surface, "LINES", pos["MY_LINES"][0], pos["MY_LINES"][1], pygame.font.Font(font_name, fonts["SCORE_SIZE"]), colors["TEXT"])
+    draw_text(surface, str(my_state.get("lines", 0)), pos["MY_LINES"][0], pos["MY_LINES"][1] + 25, pygame.font.Font(font_name, fonts["SCORE_SIZE"]), colors["TEXT"])
+    draw_text(surface, "OPPONENT", pos["OPPONENT_SCORE"][0], pos["OPPONENT_SCORE"][1], pygame.font.Font(font_name, fonts["SCORE_SIZE"]), colors["TEXT"])
+    draw_text(surface, str(opponent_state.get("score", 0)), pos["OPPONENT_SCORE"][0], pos["OPPONENT_SCORE"][1] + 25, pygame.font.Font(font_name, fonts["SCORE_SIZE"]), colors["TEXT"])
 
     next_piece = my_state.get("next_piece")
     if next_piece:
-        draw_text(surface, "NEXT", pos["NEXT_PIECE"][0], pos["NEXT_PIECE"][1], font_name, fonts["SCORE_SIZE"], colors["TEXT"])
+        draw_text(surface, "NEXT", pos["NEXT_PIECE"][0], pos["NEXT_PIECE"][1], pygame.font.Font(font_name, fonts["SCORE_SIZE"]), colors["TEXT"])
         shape_id = next_piece.get("shape_id", 0) + 1
         block_color = colors["PIECE_COLORS"][shape_id]
         for r, c in next_piece.get("blocks", []):
@@ -479,22 +481,22 @@ def draw_game_state(surface, font_name, state):
         elif opponent_state.get("game_over", False):
             reason = "Opponent's board is full!"
 
-        draw_text(surface, "GAME OVER", pos["GAME_OVER_TEXT"][0], pos["GAME_OVER_TEXT"][1] - 60, font_name, fonts["GAME_OVER_SIZE"], colors["GAME_OVER"])
-        draw_text(surface, winner_text, pos["GAME_OVER_TEXT"][0], pos["GAME_OVER_TEXT"][1], font_name, fonts["TITLE_SIZE"], colors["TEXT"])
-        draw_text(surface, score_text, pos["GAME_OVER_TEXT"][0], pos["GAME_OVER_TEXT"][1] + 40, font_name, fonts["SCORE_SIZE"], colors["TEXT"])
-        draw_text(surface, reason, pos["GAME_OVER_TEXT"][0], pos["GAME_OVER_TEXT"][1] + 80, font_name, fonts["SCORE_SIZE"], colors["TEXT"])
+        draw_text(surface, "GAME OVER", pos["GAME_OVER_TEXT"][0], pos["GAME_OVER_TEXT"][1] - 60, pygame.font.Font(font_name, fonts["GAME_OVER_SIZE"]), colors["GAME_OVER"])
+        draw_text(surface, winner_text, pos["GAME_OVER_TEXT"][0], pos["GAME_OVER_TEXT"][1], pygame.font.Font(font_name, fonts["TITLE_SIZE"]), colors["TEXT"])
+        draw_text(surface, score_text, pos["GAME_OVER_TEXT"][0], pos["GAME_OVER_TEXT"][1] + 40, pygame.font.Font(font_name, fonts["SCORE_SIZE"]), colors["TEXT"])
+        draw_text(surface, reason, pos["GAME_OVER_TEXT"][0], pos["GAME_OVER_TEXT"][1] + 80, pygame.font.Font(font_name, fonts["SCORE_SIZE"]), colors["TEXT"])
         ui_elements["back_to_lobby_btn"].draw(surface) # Draw the button
 
     elif my_state.get("game_over", False):
-        draw_text(surface, "GAME OVER", pos["GAME_OVER_TEXT"][0], pos["GAME_OVER_TEXT"][1], font_name, fonts["GAME_OVER_SIZE"], colors["GAME_OVER"])
+        draw_text(surface, "GAME OVER", pos["GAME_OVER_TEXT"][0], pos["GAME_OVER_TEXT"][1], pygame.font.Font(font_name, fonts["GAME_OVER_SIZE"]), colors["GAME_OVER"])
 
 def draw_login_screen(screen, font_small, font_large, ui_elements):
     screen.fill(CONFIG["COLORS"]["BACKGROUND"])
-    draw_text(screen, "Welcome to Tetris", 250, 100, None, CONFIG["FONTS"]["TITLE_SIZE"], CONFIG["COLORS"]["TEXT"])
+    draw_text(screen, "Welcome to Tetris", 250, 100, font_large, CONFIG["COLORS"]["TEXT"])
     
-    draw_text(screen, "Username:", 250, 200, font_small, CONFIG["FONTS"]["SCORE_SIZE"], CONFIG["COLORS"]["TEXT"])
+    draw_text(screen, "Username:", 250, 200, font_small, CONFIG["COLORS"]["TEXT"])
     ui_elements["user_input"].draw(screen)
-    draw_text(screen, "Password:", 250, 260, font_small, CONFIG["FONTS"]["SCORE_SIZE"], CONFIG["COLORS"]["TEXT"])
+    draw_text(screen, "Password:", 250, 260, font_small, CONFIG["COLORS"]["TEXT"])
     ui_elements["pass_input"].draw(screen)
     
     ui_elements["login_btn"].draw(screen)
@@ -503,16 +505,20 @@ def draw_login_screen(screen, font_small, font_large, ui_elements):
     with g_state_lock:
         error_msg = g_error_message
     if error_msg:
-        draw_text(screen, error_msg, 250, 400, font_small, CONFIG["FONTS"]["SCORE_SIZE"], CONFIG["COLORS"]["ERROR"])
+        draw_text(screen, error_msg, 250, 400, font_small, CONFIG["COLORS"]["ERROR"])
 
-def draw_lobby_screen(screen, font_small, font_large, ui_elements):
+def draw_lobby_screen(screen, font_small, font_large, font_pixel, ui_elements):
     screen.fill(CONFIG["COLORS"]["BACKGROUND"])
-    draw_text(screen, f"Lobby - Welcome {g_username}", 50, 20, None, CONFIG["FONTS"]["TITLE_SIZE"], CONFIG["COLORS"]["TEXT"])
+    draw_text(screen, f"Lobby - Welcome {g_username}", 50, 20, font_large, CONFIG["COLORS"]["TEXT"])
     
     ui_elements["create_room_btn"].draw(screen)
     
-    draw_text(screen, "Rooms:", 50, 150, font_small, CONFIG["FONTS"]["SCORE_SIZE"], CONFIG["COLORS"]["TEXT"])
-    draw_text(screen, "Users:", 450, 150, font_small, CONFIG["FONTS"]["SCORE_SIZE"], CONFIG["COLORS"]["TEXT"])
+    draw_text(screen, "Rooms:", 50, 150, font_small, CONFIG["COLORS"]["TEXT"])
+
+    # Draw rounded rectangle for users list
+    user_list_rect = pygame.Rect(450, 150, 350, 400)
+    pygame.draw.rect(screen, CONFIG["COLORS"]["USER_LIST_BACKGROUND"], user_list_rect, border_radius=15)
+    draw_text(screen, "Online Users", 460, 160, font_pixel, CONFIG["COLORS"]["TEXT"])
 
     with g_state_lock:
         rooms = g_lobby_data.get("rooms", [])
@@ -529,46 +535,49 @@ def draw_lobby_screen(screen, font_small, font_large, ui_elements):
         
     ui_elements["users_list"] = []
     for i, user in enumerate(users):
-        y = 200 + i * 40
+        y = 200 + i * 30
         user_text = f"{user['username']} ({user['status']})"
         is_inviteable = (user['username'] != g_username and user['status'] == 'online')
         
-        btn = Button(450, y, 350, 35, font_small, user_text)
-        btn.username = user['username']
-        btn.is_invite = is_inviteable
-        btn.draw(screen)
+        # Change the button to be a text element
+        draw_text(screen, user_text, 460, y, font_small, CONFIG["COLORS"]["TEXT"])
         
         if is_inviteable:
-            ui_elements["users_list"].append(btn)
+            # Add a smaller invite button next to the user
+            invite_btn = Button(750, y, 50, 25, font_small, "Invite")
+            invite_btn.username = user['username']
+            invite_btn.is_invite = is_inviteable
+            invite_btn.draw(screen)
+            ui_elements["users_list"].append(invite_btn)
 
 def draw_room_screen(screen, font_small, font_large, ui_elements):
     screen.fill(CONFIG["COLORS"]["BACKGROUND"])
     
-    draw_text(screen, "Esc to exit", CONFIG["SCREEN"]["WIDTH"] - 120, 20, None, 18, CONFIG["COLORS"]["TEXT"])
+    draw_text(screen, "Esc to exit", CONFIG["SCREEN"]["WIDTH"] - 120, 20, font_small, CONFIG["COLORS"]["TEXT"])
 
     with g_state_lock:
         room_name = g_room_data.get("name", "Room")
         players = g_room_data.get("players", [])
         host = g_room_data.get("host")
         
-    draw_text(screen, f"Room: {room_name}", 50, 20, None, CONFIG["FONTS"]["TITLE_SIZE"], CONFIG["COLORS"]["TEXT"])
+    draw_text(screen, f"Room: {room_name}", 50, 20, font_large, CONFIG["COLORS"]["TEXT"])
     
-    draw_text(screen, "Players:", 50, 100, font_small, CONFIG["FONTS"]["SCORE_SIZE"], CONFIG["COLORS"]["TEXT"])
+    draw_text(screen, "Players:", 50, 100, font_small, CONFIG["COLORS"]["TEXT"])
     for i, player in enumerate(players):
         text = f"P{i+1}: {player}"
         if player == host:
             text += " (Host)"
-        draw_text(screen, text, 50, 150 + i * 40, font_small, CONFIG["FONTS"]["SCORE_SIZE"], CONFIG["COLORS"]["TEXT"])
+        draw_text(screen, text, 50, 150 + i * 40, font_small, CONFIG["COLORS"]["TEXT"])
     
     if len(players) < 2:
-        draw_text(screen, "Waiting for P2...", 50, 230, font_small, CONFIG["FONTS"]["SCORE_SIZE"], CONFIG["COLORS"]["TEXT"])
+        draw_text(screen, "Waiting for P2...", 50, 230, font_small, CONFIG["COLORS"]["TEXT"])
     
     if g_username == host and len(players) == 2:
         ui_elements["start_game_btn"].draw(screen)
     elif g_username == host:
-        draw_text(screen, "Waiting for P2 to start...", 50, 400, font_small, CONFIG["FONTS"]["SCORE_SIZE"], CONFIG["COLORS"]["TEXT"])
+        draw_text(screen, "Waiting for P2 to start...", 50, 400, font_small, CONFIG["COLORS"]["TEXT"])
     else:
-        draw_text(screen, "Waiting for host to start...", 50, 400, font_small, CONFIG["FONTS"]["SCORE_SIZE"], CONFIG["COLORS"]["TEXT"])
+        draw_text(screen, "Waiting for host to start...", 50, 400, font_small, CONFIG["COLORS"]["TEXT"])
 
 def draw_invite_popup(screen, font_small, ui_elements):
     global g_invite_popup
@@ -591,8 +600,8 @@ def draw_invite_popup(screen, font_small, ui_elements):
         
         # Draw text
         inv_text = f"Invite from {popup_data['from_user']}"
-        draw_text(screen, inv_text, 270, 270, font_small, CONFIG["FONTS"]["TITLE_SIZE"], CONFIG["COLORS"]["TEXT"])
-        draw_text(screen, f"to join room {popup_data['room_id']}?", 270, 310, font_small, CONFIG["FONTS"]["SCORE_SIZE"], CONFIG["COLORS"]["TEXT"])
+        draw_text(screen, inv_text, 270, 270, font_small, CONFIG["COLORS"]["TEXT"])
+        draw_text(screen, f"to join room {popup_data['room_id']}?", 270, 310, font_small, CONFIG["COLORS"]["TEXT"])
         
         # Draw buttons
         ui_elements["invite_accept_btn"].draw(screen)
@@ -623,6 +632,7 @@ def main():
     clock = pygame.time.Clock()
     font_small = pygame.font.Font(None, 24)
     font_large = pygame.font.Font(None, 36)
+    font_pixel = pygame.font.Font(CONFIG["FONTS"]["PIXEL_FONT"], CONFIG["FONTS"]["PIXEL_FONT_SIZE"])
 
     # 3. Create UI elements
     ui_elements = {
@@ -762,11 +772,11 @@ def main():
         # Render Graphics
         if current_client_state == "CONNECTING":
             screen.fill(CONFIG["COLORS"]["BACKGROUND"])
-            draw_text(screen, "Connecting to lobby...", 250, 300, font_large, 36, CONFIG["COLORS"]["TEXT"])
+            draw_text(screen, "Connecting to lobby...", 250, 300, font_large, CONFIG["COLORS"]["TEXT"])
         elif current_client_state == "LOGIN":
             draw_login_screen(screen, font_small, font_large, ui_elements)
         elif current_client_state == "LOBBY":
-            draw_lobby_screen(screen, font_small, font_large, ui_elements)
+            draw_lobby_screen(screen, font_small, font_large, font_pixel, ui_elements)
         elif current_client_state == "IN_ROOM":
             draw_room_screen(screen, font_small, font_large, ui_elements)
         elif current_client_state == "GAME":
@@ -775,11 +785,11 @@ def main():
             draw_game_state(screen, CONFIG["FONTS"]["DEFAULT_FONT"], state_copy)
         elif current_client_state == "ERROR":
             screen.fill(CONFIG["COLORS"]["BACKGROUND"])
-            draw_text(screen, "Connection Error", 250, 100, None, 50, CONFIG["COLORS"]["ERROR"])
+            draw_text(screen, "Connection Error", 250, 100, font_large, CONFIG["COLORS"]["ERROR"])
             with g_state_lock:
                 error_msg = g_error_message
             if error_msg:
-                draw_text(screen, error_msg, 100, 200, font_small, 30, CONFIG["COLORS"]["ERROR"])
+                draw_text(screen, error_msg, 100, 200, font_small, CONFIG["COLORS"]["ERROR"])
         
         draw_invite_popup(screen, font_small, ui_elements)
 
