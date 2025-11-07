@@ -509,11 +509,21 @@ def draw_game_state(surface, font_name, state):
 
     next_piece = my_state.get("next_piece")
     if next_piece:
-        draw_text(surface, "NEXT", pos["NEXT_PIECE"][0], pos["NEXT_PIECE"][1], font_name, fonts["SCORE_SIZE"], colors["TEXT"])
+        # Define new position and size for the next piece display
+        next_piece_pos_x = pos["NEXT_PIECE"][0] + 20 # Move it right
+        next_piece_block_size = int(sizes["BLOCK_SIZE"] * 0.85) # 15% smaller
+
+        draw_text(surface, "NEXT", next_piece_pos_x, pos["NEXT_PIECE"][1], font_name, fonts["SCORE_SIZE"], colors["TEXT"])
+        
         shape_id = next_piece.get("shape_id", 0) + 1
         block_color = colors["PIECE_COLORS"][shape_id]
+        
         for r, c in next_piece.get("blocks", []):
-            rect = (pos["NEXT_PIECE"][0] + (c-2) * sizes["BLOCK_SIZE"], pos["NEXT_PIECE"][1] + (r+2) * sizes["BLOCK_SIZE"], sizes["BLOCK_SIZE"], sizes["BLOCK_SIZE"])
+            # Use the new size and position for drawing
+            rect = (next_piece_pos_x + (c-2) * next_piece_block_size, 
+                    pos["NEXT_PIECE"][1] + (r+2) * next_piece_block_size, 
+                    next_piece_block_size, 
+                    next_piece_block_size)
             pygame.draw.rect(surface, block_color, rect, 0)
             pygame.draw.rect(surface, colors["GRID_LINES"], rect, 1)
 
