@@ -590,12 +590,34 @@ def draw_room_screen(screen, font_small, font_large, ui_elements):
         draw_text(screen, text, 50, 150 + i * 40, font_small, CONFIG["FONTS"]["SCORE_SIZE"], CONFIG["COLORS"]["TEXT"])
     
     if len(players) < 2:
-        draw_text(screen, "Waiting for P2...", 50, 230, font_small, CONFIG["FONTS"]["SCORE_SIZE"], CONFIG["COLORS"]["TEXT"])
-    
+        # Only show invite list if there's space in the room
+        draw_text(screen, "Invite Users:", 450, 100, font_small, CONFIG["FONTS"]["SCORE_SIZE"], CONFIG["COLORS"]["TEXT"])
+
+        with g_state_lock:
+            all_users = g_lobby_data.get("users", [])
+        
+        ui_elements["room_invite_list"] = []
+        
+        # Filter out self and players already in the room
+        inviteable_users = [u for u in all_users if u['username'] not in players]
+
+        for i, user in enumerate(inviteable_users):
+            y = 150 + i * 40
+            user_text = f"{user['username']} ({user['status']})"
+            is_inviteable = (user['status'] == 'online')
+            
+            btn = Button(450, y, 350, 35, font_small, user_text)
+            btn.username = user['username']
+            btn.is_invite = is_inviteable
+            btn.draw(screen)
+            
+            if is_inviteable:
+                ui_elements["room_invite_list"].append(btn)
+
     if g_username == host and len(players) == 2:
         ui_elements["start_game_btn"].draw(screen)
     elif g_username == host:
-        draw_text(screen, "Waiting for P2 to start...", 50, 400, font_small, CONFIG["FONTS"]["SCORE_SIZE"], CONFIG["COLORS"]["TEXT"])
+        draw_text(screen, "Waiting for P2 to join...", 50, 400, font_small, CONFIG["FONTS"]["SCORE_SIZE"], CONFIG["COLORS"]["TEXT"])
     else:
         draw_text(screen, "Waiting for host to start...", 50, 400, font_small, CONFIG["FONTS"]["SCORE_SIZE"], CONFIG["COLORS"]["TEXT"])
 
@@ -767,6 +789,15 @@ def main():
                     if ui_elements["start_game_btn"].handle_event(event):
                         send_to_lobby_queue({"action": "start_game"})
                         # State will be changed to "GAME" by the network thread
+                    
+                    # Handle clicks on the new invite buttons in the room
+                    for user_btn in ui_elements.get("room_invite_list", []):
+                        if user_btn.handle_event(event) and user_btn.is_invite:
+                            logging.info(f"Inviting user from room: {user_btn.username}")
+                            send_to_lobby_queue({
+                                "action": "invite",
+                                "data": {"target_user": user_btn.username}
+                            })
                 
                 elif current_client_state == "GAME":
                     with g_state_lock:
