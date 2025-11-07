@@ -641,9 +641,10 @@ def draw_invite_popup(screen, font_small, ui_elements):
         pygame.draw.rect(screen, CONFIG["COLORS"]["TEXT"], popup_rect, 2)
         
         # Draw text
-        inv_text = f"Invite from {popup_data['from_user']}"
-        draw_text(screen, inv_text, 270, 270, font_small, CONFIG["FONTS"]["TITLE_SIZE"], CONFIG["COLORS"]["TEXT"])
-        draw_text(screen, f"to join room {popup_data['room_id']}?", 270, 310, font_small, CONFIG["FONTS"]["SCORE_SIZE"], CONFIG["COLORS"]["TEXT"])
+        inv_text = f"{popup_data['from_user']} invited you to a game!"
+        # The 'font' parameter to draw_text should be a font name or None, not a Font object.
+        # Using None to select the default pygame font.
+        draw_text(screen, inv_text, 270, 290, None, CONFIG["FONTS"]["TITLE_SIZE"], CONFIG["COLORS"]["TEXT"])
         
         # Draw buttons
         ui_elements["invite_accept_btn"].draw(screen)
