@@ -55,8 +55,8 @@ CONFIG = {
             (128, 0, 128),  # Purple
             (0, 119, 211),    # BLue
             (255, 165, 0),  # Orange
-            (253, 63, 89),  # Salmon (reddish)
-            (255, 0, 0)
+            (57, 137, 47),     # Green
+            (253, 63, 89)  # Salmon (reddish)
         ]
     },
     "POSITIONS": {
@@ -439,14 +439,24 @@ def draw_text(surface, text, x, y, font, size, color):
 def draw_board(surface, board_data, x_start, y_start, block_size):
     num_rows = len(board_data); num_cols = len(board_data[0])
     colors = CONFIG["COLORS"]["PIECE_COLORS"]; grid_color = CONFIG["COLORS"]["GRID_LINES"]
+    border_width = 2 # Define border width
     for r in range(num_rows):
         for c in range(num_cols):
             color_id = board_data[r][c]
-            block_color = colors[color_id] if 0 <= color_id < len(colors) else (255, 255, 255)
-            rect = (x_start + c * block_size, y_start + r * block_size, block_size, block_size)
+            rect = pygame.Rect(x_start + c * block_size, y_start + r * block_size, block_size, block_size)
+            
             if color_id != 0:
-                pygame.draw.rect(surface, block_color, rect, 0)
-            pygame.draw.rect(surface, grid_color, rect, 1)
+                block_color = colors[color_id] if 0 <= color_id < len(colors) else (255, 255, 255)
+                darker_color = tuple(max(0, component - 70) for component in block_color)
+                
+                # Draw the border as the background
+                pygame.draw.rect(surface, darker_color, rect, 0)
+                # Draw the main block color inset
+                inset_rect = rect.inflate(-border_width * 2, -border_width * 2)
+                pygame.draw.rect(surface, block_color, inset_rect, 0)
+            else:
+                # For empty cells, just draw the faint grid line
+                pygame.draw.rect(surface, grid_color, rect, 1)
 
 def draw_game_state(surface, font_name, state):
     surface.fill(CONFIG["COLORS"]["BACKGROUND"])
@@ -471,11 +481,17 @@ def draw_game_state(surface, font_name, state):
     if my_piece:
         shape_id = my_piece.get("shape_id", 0) + 1
         block_color = colors["PIECE_COLORS"][shape_id]
+        darker_color = tuple(max(0, component - 70) for component in block_color)
+        border_width = 2
+
         for y, x in my_piece.get("blocks", []):
             if y >= 0:
-                rect = (pos["MY_BOARD"][0] + x * sizes["BLOCK_SIZE"], pos["MY_BOARD"][1] + y * sizes["BLOCK_SIZE"], sizes["BLOCK_SIZE"], sizes["BLOCK_SIZE"])
-                pygame.draw.rect(surface, block_color, rect, 0)
-                pygame.draw.rect(surface, colors["GRID_LINES"], rect, 1)
+                rect = pygame.Rect(pos["MY_BOARD"][0] + x * sizes["BLOCK_SIZE"], pos["MY_BOARD"][1] + y * sizes["BLOCK_SIZE"], sizes["BLOCK_SIZE"], sizes["BLOCK_SIZE"])
+                
+                # Draw border and inset block
+                pygame.draw.rect(surface, darker_color, rect, 0)
+                inset_rect = rect.inflate(-border_width * 2, -border_width * 2)
+                pygame.draw.rect(surface, block_color, inset_rect, 0)
 
     opp_board = opponent_state.get("board")
     if opp_board:
@@ -518,20 +534,25 @@ def draw_game_state(surface, font_name, state):
         # Define new position and size for the next piece display
         next_piece_pos_x = pos["NEXT_PIECE"][0] + 20 # Move it right
         next_piece_block_size = int(sizes["BLOCK_SIZE"] * 0.85) # 15% smaller
+        border_width = 1 # Thinner border for smaller preview
 
         draw_text(surface, "NEXT", next_piece_pos_x, pos["NEXT_PIECE"][1], font_name, fonts["SCORE_SIZE"], colors["TEXT"])
         
         shape_id = next_piece.get("shape_id", 0) + 1
         block_color = colors["PIECE_COLORS"][shape_id]
-        
+        darker_color = tuple(max(0, component - 70) for component in block_color)
+
         for r, c in next_piece.get("blocks", []):
             # Use the new size and position for drawing
-            rect = (next_piece_pos_x + (c-2) * next_piece_block_size, 
-                    pos["NEXT_PIECE"][1] + (r+2) * next_piece_block_size, 
-                    next_piece_block_size, 
-                    next_piece_block_size)
-            pygame.draw.rect(surface, block_color, rect, 0)
-            pygame.draw.rect(surface, colors["GRID_LINES"], rect, 1)
+            rect = pygame.Rect(next_piece_pos_x + (c-2) * next_piece_block_size, 
+                               pos["NEXT_PIECE"][1] + (r+2) * next_piece_block_size, 
+                               next_piece_block_size, 
+                               next_piece_block_size)
+            
+            # Draw border and inset block
+            pygame.draw.rect(surface, darker_color, rect, 0)
+            inset_rect = rect.inflate(-border_width * 2, -border_width * 2)
+            pygame.draw.rect(surface, block_color, inset_rect, 0)
 
     final_results = None
     with g_state_lock:
