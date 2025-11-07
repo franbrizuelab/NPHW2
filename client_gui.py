@@ -778,9 +778,8 @@ def main():
                         elif event.key == pygame.K_DOWN: send_input_to_server_queue("SOFT_DROP")
                         elif event.key == pygame.K_UP: send_input_to_server_queue("ROTATE")
                         elif event.key == pygame.K_SPACE: send_input_to_server_queue("HARD_DROP")
-                        elif event.key == pygame.K_ESCAPE: 
-                            if g_game_socket:
-                                g_game_socket.close() # This will trigger the game_network_thread to exit
+                        elif event.key == pygame.K_ESCAPE:
+                            g_game_send_queue.put({"type": "FORFEIT"})
                     
                     if game_is_over:
                         if ui_elements["back_to_lobby_btn"].handle_event(event):
