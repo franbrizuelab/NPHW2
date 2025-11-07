@@ -33,8 +33,8 @@ DB_PORT = config.DB_PORT
 logging.basicConfig(level=logging.INFO, format='[LOBBY_SERVER] %(asctime)s - %(message)s')
 
 # Global State
-# These store the *live* state. The DB stores the *persistent* state.
-# We need locks to make these dictionaries thread-safe.
+# These store the LIVE state. The DB stores the PERSISTENT state.
+# Locks to make these dictionaries thread-safe.
 
 # g_client_sessions: maps {username: {"sock": socket, "addr": tuple, "status": "online" | "in_room"}}
 g_client_sessions = {}
@@ -250,9 +250,9 @@ def handle_logout(username: str):
             except Exception as e:
                 logging.warning(f"Error during final logout send for {username}: {e}")
 
+# Handles 'list_rooms' action.
 def handle_list_rooms(client_sock: socket.socket):
-    """Handles 'list_rooms' action."""
-    # This just gets the *live* rooms from memory.
+    # This just gets the LIVE rooms from memory.
     # (A better version might query the DB for public/persistent rooms)
     
     public_rooms = []
@@ -470,7 +470,6 @@ def handle_start_game(client_sock: socket.socket, username: str):
                 send_to_client(client_sock, {"status": "error", "reason": "room_not_full"})
                 return
             
-            # --- ATOMIC STATE CHANGE ---
             # All checks passed. Set status to "playing" immediately.
             room["status"] = "playing"
             
@@ -487,7 +486,6 @@ def handle_start_game(client_sock: socket.socket, username: str):
             if p2_session:
                 p2_session["status"] = "playing"
                 p2_sock = p2_session["sock"]
-            # --- END OF STATE CHANGE ---
     
     # 3. All locks are released. Now launch the game and notify.
     try:
@@ -575,23 +573,42 @@ def handle_invite(client_sock: socket.socket, inviter_username: str, data: dict)
 
 def handle_game_over(room_id: int):
     """
-    Resets a room and its players to idle status after a game.
+    Deletes a room and sets its players to online status after a game.
     """
-    with g_room_lock:
+    with g_session_lock, g_room_lock:
         room = g_rooms.get(room_id)
         if not room or room["status"] != "playing":
             return # Nothing to do
 
-        logging.info(f"Game over for room {room_id}. Resetting to idle.")
-        room["status"] = "idle"
+        logging.info(f"Game over for room {room_id}. Deleting room.")
         player_list = list(room["players"]) # Copy for safe iteration
+        del g_rooms[room_id]
 
-    # Update player statuses
-    with g_session_lock:
+        # Update player statuses
         for username in player_list:
             session = g_client_sessions.get(username)
             if session:
-                session["status"] = f"in_room_{room_id}" # Back to being in the room
+                session["status"] = "online" # Back to being online
+
+        # Broadcast the changes to all clients
+        public_rooms = []
+        for room_id, room_data in g_rooms.items():
+            if room_data["status"] == "idle": # Only show idle rooms
+                public_rooms.append({
+                    "id": room_id,
+                    "name": room_data["name"],
+                    "host": room_data["host"],
+                    "players": len(room_data["players"])
+                })
+        user_list = []
+        user_list = [
+            {"username": user, "status": data["status"]}
+            for user, data in g_client_sessions.items()
+        ]
+
+        for session in g_client_sessions.values():
+            send_to_client(session["sock"], {"status": "ok", "rooms": public_rooms})
+            send_to_client(session["sock"], {"status": "ok", "users": user_list})
 
 # Client Handling Thread
 
@@ -695,6 +712,10 @@ def handle_client(client_sock: socket.socket, addr: tuple):
 def main():
     """Starts the Lobby server."""
     
+    # Initialize the socket for the server
+    # AF_INET: use IPv4 adress
+    # SOCK_STREAM: TCP socket
+    # SO_REUSEADDR: Allows to reuse server addresss after it has been closed
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     

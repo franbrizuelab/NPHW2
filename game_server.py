@@ -151,8 +151,10 @@ def handle_game_end(clients: list, game_p1: TetrisGame, game_p2: TetrisGame, win
         "type": "GAME_OVER",
         "winner": winner,
         "p1_results": p1_results,
-        "p2_results": p2_results
+        "p2_results": p2_results,
+        "room_id": room_id
     }
+
     try:
         for sock in list(clients):
             if sock:
@@ -160,22 +162,7 @@ def handle_game_end(clients: list, game_p1: TetrisGame, game_p2: TetrisGame, win
     except Exception as e:
         logging.warning(f"Failed to send GAME_OVER message: {e}")
 
-    # 4. Notify Lobby Server
-    notify_lobby_of_game_over(room_id)
 
-def notify_lobby_of_game_over(room_id: int):
-    """Connects to the lobby server to report that the game has ended."""
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            sock.connect((config.LOBBY_HOST, config.LOBBY_PORT))
-            request = {
-                "action": "game_over",
-                "data": {"room_id": room_id}
-            }
-            protocol.send_msg(sock, json.dumps(request).encode('utf-8'))
-            logging.info(f"Notified lobby that game in room {room_id} is over.")
-    except socket.error as e:
-        logging.error(f"Could not connect to lobby server to report game over: {e}")
 
 # Runs gravity, processes inputs, and broadcasts state
 def game_loop(clients: list, input_queue: queue.Queue, game_p1: TetrisGame, game_p2: TetrisGame, p1_user: str, p2_user: str, room_id: int):
