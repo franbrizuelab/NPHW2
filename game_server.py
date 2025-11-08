@@ -76,7 +76,7 @@ def handle_client(sock: socket.socket, player_id: int, input_queue: queue.Queue)
 
 # Game Logic
 
-def broadcast_state(clients: list, game_p1: TetrisGame, game_p2: TetrisGame):
+def broadcast_state(clients: list, game_p1: TetrisGame, game_p2: TetrisGame, remaining_time: int):
     """
     Builds the snapshot and sends it to both clients.
     """
@@ -87,7 +87,8 @@ def broadcast_state(clients: list, game_p1: TetrisGame, game_p2: TetrisGame):
         snapshot = {
             "type": "SNAPSHOT",
             "p1_state": p1_state,
-            "p2_state": p2_state
+            "p2_state": p2_state,
+            "remaining_time": remaining_time
         }
         
         json_bytes = json.dumps(snapshot).encode('utf-8')
@@ -116,7 +117,8 @@ def process_input(game: TetrisGame, action: str):
         game.hard_drop()
 
 # UPDATE SIGNATURE
-def handle_game_end(clients: list, game_p1: TetrisGame, game_p2: TetrisGame, winner: str, p1_user: str, p2_user: str, room_id: int):
+# rrrrr
+def handle_game_end(clients: list, game_p1: TetrisGame, game_p2: TetrisGame, winner: str, reason: str, loser_username: str, p1_user: str, p2_user: str, room_id: int):
     """
     Handles all end-of-game logic:
     1. Builds the GameLog.
@@ -124,7 +126,7 @@ def handle_game_end(clients: list, game_p1: TetrisGame, game_p2: TetrisGame, win
     3. Sends the final GAME_OVER message to both clients.
     4. Notifies the lobby server that the game is over.
     """
-    logging.info(f"Game loop finished. Winner: {winner}")
+    logging.info(f"Game loop finished. Winner: {winner}, Reason: {reason}")
     
     # 1. Build GameLog
     p1_results = {"userId": p1_user, "score": game_p1.score, "lines": game_p1.lines_cleared}
@@ -134,7 +136,8 @@ def handle_game_end(clients: list, game_p1: TetrisGame, game_p2: TetrisGame, win
         "matchid": f"match_{int(time.time())}",
         "users": [p1_user, p2_user], # Use real usernames
         "results": [p1_results, p2_results],
-        "winner": winner
+        "winner": winner,
+        "reason": reason
     }
 
     # 2. Report to DB
@@ -149,9 +152,18 @@ def handle_game_end(clients: list, game_p1: TetrisGame, game_p2: TetrisGame, win
         logging.warning(f"Failed to save GameLog to DB: {db_response}")
 
     # 3. Send final GAME_OVER message to clients
+    winner_username = "TIE"
+    if winner == "P1":
+        winner_username = p1_user
+    elif winner == "P2":
+        winner_username = p2_user
+        
     game_over_msg = {
         "type": "GAME_OVER",
         "winner": winner,
+        "reason": reason,
+        "loser_username": loser_username,
+        "winner_username": winner_username,
         "p1_results": p1_results,
         "p2_results": p2_results,
         "room_id": room_id
@@ -168,69 +180,101 @@ def handle_game_end(clients: list, game_p1: TetrisGame, game_p2: TetrisGame, win
 
 # Runs gravity, processes inputs, and broadcasts state
 def game_loop(clients: list, input_queue: queue.Queue, game_p1: TetrisGame, game_p2: TetrisGame, p1_user: str, p2_user: str, room_id: int):
-    logging.info("Game loop started.")
-    last_tick_time = time.time()
+    logging.info("Game loop started for 'Lines Over Time' mode.")
+    start_time = time.time()
+    game_duration = 20  # GAME TIME VARIABLE
     winner = None
 
-    while True:
-        # Process Inputs
-        # Empty the input queue
-        while not input_queue.empty():
-            try:
+    last_gravity_tick_time = time.time()
+    last_broadcast_time = 0
+
+    while winner is None:
+        current_time = time.time()
+        elapsed_time = current_time - start_time
+
+        # 1. Check for game end conditions
+        if elapsed_time >= game_duration:
+            break  # Time's up, exit loop to determine winner by lines
+
+        if game_p1.game_over:
+            winner = "P2"
+            break
+        if game_p2.game_over:
+            winner = "P1"
+            break
+
+        # 2. Process Inputs
+        try:
+            while not input_queue.empty():
                 player_id, action = input_queue.get_nowait()
                 
-                if action == "DISCONNECT":
-                    logging.info(f"Player {player_id + 1} disconnected. Ending game.")
+                if action == "DISCONNECT" or action == "FORFEIT":
+                    logging.info(f"Player {player_id + 1} disconnected or forfeited.")
                     winner = "P2" if player_id == 0 else "P1"
-                    game_p1.game_over = True # Force end
-                    game_p2.game_over = True # Force end
-                    break # Exit input processing loop
-
-                if action == "FORFEIT":
-                    logging.info(f"Player {player_id + 1} forfeited. Ending game.")
-                    winner = "P2" if player_id == 0 else "P1"
-                    game_p1.game_over = True
-                    game_p2.game_over = True
                     break
 
                 if player_id == 0:
                     process_input(game_p1, action)
                 elif player_id == 1:
                     process_input(game_p2, action)
-            except queue.Empty:
-                break # Queue is empty, move on
-            except Exception as e:
-                logging.error(f"Error processing input: {e}")
 
+        except queue.Empty:
+            pass
+        
         if winner:
             break
-        # Run Gravity (Tick)
-        current_time = time.time()
-        if (current_time - last_tick_time) * 1000 >= GRAVITY_INTERVAL_MS:
+
+        # 3. Apply gravity (Tick) with correct timing
+        if (current_time - last_gravity_tick_time) * 1000 >= GRAVITY_INTERVAL_MS:
             game_p1.tick()
             game_p2.tick()
-            last_tick_time = current_time
+            last_gravity_tick_time = current_time
 
-            # Broadcast State
-            # We broadcast *after* the tick
-            broadcast_state(clients, game_p1, game_p2)
-
-        # Check End Condition
-        # (Simple survival mode)
-        if game_p1.game_over or game_p2.game_over:
-            logging.info("Game over condition met.")
-            if winner is None: # Determine by disconnect
-                if game_p1.game_over:
-                    winner = "P2"
-                elif game_p2.game_over:
-                    winner = "P1"
-                # TODO: tie logic
-            break
+        # 4. Broadcast State periodically
+        if current_time - last_broadcast_time > 0.1: # Broadcast every 100ms
+            remaining_time = max(0, int(game_duration - elapsed_time))
+            broadcast_state(clients, game_p1, game_p2, remaining_time)
+            last_broadcast_time = current_time
             
-        # Don't burn CPU
         time.sleep(0.01)
-        
-    handle_game_end(clients, game_p1, game_p2, winner, p1_user, p2_user, room_id)
+
+    # --- Loop has ended, determine the final winner ---
+    reason = ""
+    loser_username = None
+    if winner is None:  # This means time ran out
+        lines_p1 = game_p1.lines_cleared
+        lines_p2 = game_p2.lines_cleared
+        logging.info(f"Time's up! Final lines P1:{lines_p1} vs P2:{lines_p2}")
+        reason = "time_up"
+        if lines_p1 > lines_p2:
+            winner = "P1"
+            loser_username = p2_user
+        elif lines_p2 > lines_p1:
+            winner = "P2"
+            loser_username = p1_user
+        else:
+            winner = "TIE"
+            reason = "tie"
+    else:
+        # This means someone topped out or forfeited
+        if game_p1.game_over or game_p2.game_over:
+            reason = "board_full"
+            loser_username = p1_user if game_p1.game_over else p2_user
+        else:
+            reason = "forfeit"
+            loser_username = p1_user if winner == "P2" else p2_user
+
+
+    # Force both games to be "over" so the final board state is accurate
+    game_p1.game_over = True
+    game_p2.game_over = True
+
+    # Send one final snapshot to make sure clients have the last board state
+    remaining_time = 0
+    broadcast_state(clients, game_p1, game_p2, remaining_time)
+    time.sleep(0.1) # Give clients a moment to process the final state
+
+    handle_game_end(clients, game_p1, game_p2, winner, reason, loser_username, p1_user, p2_user, room_id)
 
 def forward_to_db(request: dict) -> dict | None:
     """Acts as a client to the DB_Server."""
