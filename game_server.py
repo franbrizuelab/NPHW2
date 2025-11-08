@@ -179,7 +179,7 @@ def handle_game_end(clients: list, game_p1: TetrisGame, game_p2: TetrisGame, win
 def game_loop(clients: list, input_queue: queue.Queue, game_p1: TetrisGame, game_p2: TetrisGame, p1_user: str, p2_user: str, room_id: int):
     logging.info("Game loop started for 'Lines Over Time' mode.")
     start_time = time.time()
-    game_duration = 20  # 20-second game
+    game_duration = 45  # GAME TIME VARIABLE
     winner = None
 
     last_gravity_tick_time = time.time()
