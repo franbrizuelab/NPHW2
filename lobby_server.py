@@ -420,7 +420,7 @@ def handle_leave_room(username: str):
                         player_session["status"] = "online"
             
 
-            time.sleep(10) # Let's see if the other user leaves the room
+            time.sleep(1) # Let's see if the other user leaves the room
             # THEN, delete the room
             del g_rooms[room_id]
             logging.info(f"Room {room_id} closed.")
@@ -584,6 +584,7 @@ def handle_invite(client_sock: socket.socket, inviter_username: str, data: dict)
         # This case should be rare but good to handle
         send_to_client(client_sock, {"status": "error", "reason": "could_not_find_target_socket"})
 
+# rrrrr
 def handle_game_over(room_id: int):
     """
     Deletes a room and sets its players to online status after a game.
@@ -690,9 +691,9 @@ def handle_client(client_sock: socket.socket, addr: tuple):
                 
                 elif action == 'join_room':
                     handle_join_room(client_sock, username, data)
-                # rrrrr
+
                 elif action == 'leave_room':
-                    logging.info(f"{username} leaving room via action")
+                    # logging.info(f"{username} leaving room via action")
                     handle_leave_room(username)
                 
                 elif action == 'invite':

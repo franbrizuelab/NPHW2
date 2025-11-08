@@ -116,6 +116,7 @@ def process_input(game: TetrisGame, action: str):
         game.hard_drop()
 
 # UPDATE SIGNATURE
+# rrrrr
 def handle_game_end(clients: list, game_p1: TetrisGame, game_p2: TetrisGame, winner: str, p1_user: str, p2_user: str, room_id: int):
     """
     Handles all end-of-game logic:
@@ -217,6 +218,7 @@ def game_loop(clients: list, input_queue: queue.Queue, game_p1: TetrisGame, game
 
         # Check End Condition
         # (Simple survival mode)
+        # rrrrr
         if game_p1.game_over or game_p2.game_over:
             logging.info("Game over condition met.")
             if winner is None: # Determine by disconnect
