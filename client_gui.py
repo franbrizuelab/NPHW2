@@ -62,9 +62,13 @@ CONFIG = {
     },
     "POSITIONS": {
         "MY_BOARD": (50, 50), "OPPONENT_BOARD": (550, 100),
-        "NEXT_PIECE": (370, 100), "MY_SCORE": (370, 50),
-        "OPPONENT_SCORE": (550, 50), "MY_LINES": (370, 75),
-        "OPPONENT_LINES": (550, 75), "GAME_OVER_TEXT": (100, 300)
+        "MY_SCORE":       (370, 50),
+        "MY_LINES":       (370, 80),
+        "TIME":           (370, 110),
+        "NEXT_PIECE":     (370, 150),
+        "OPPONENT_SCORE": (550, 50),
+        "OPPONENT_LINES": (550, 75), 
+        "GAME_OVER_TEXT": (100, 300)
     },
     "FONTS": {
         "DEFAULT_FONT": None, "TITLE_SIZE": 30,
@@ -562,6 +566,14 @@ def draw_game_state(surface, font_name, state, ui_elements):
     opp_score_rect = opp_score_surf.get_rect(topright=(opp_right_edge, pos["OPPONENT_SCORE"][1] + 25))
     surface.blit(opp_score_surf, opp_score_rect)
 
+    # Display remaining time
+    remaining_time = state.get("remaining_time")
+    if remaining_time is not None:
+        draw_text(surface, "TIME", pos["TIME"][0], pos["TIME"][1], font_name, fonts["SCORE_SIZE"], colors["TEXT"])
+        time_surf = font_obj.render(str(remaining_time), True, colors["TEXT"])
+        time_rect = time_surf.get_rect(topright=(my_right_edge, pos["TIME"][1]))
+        surface.blit(time_surf, time_rect)
+
     next_piece = my_state.get("next_piece")
     if next_piece:
         # Define new position and size for the next piece display
@@ -602,8 +614,14 @@ def draw_game_over_screen(surface, font_name, ui_elements, final_results, my_sta
     pos = CONFIG["POSITIONS"]; colors = CONFIG["COLORS"]; fonts = CONFIG["FONTS"]
 
     # 3. Extract results and determine reason
-    winner = final_results.get('winner', 'Unknown')
-    winner_text = f"WINNER: {winner}"
+    winner_role = final_results.get('winner', 'Unknown')
+    winner_display_name = final_results.get('winner_username', winner_role)
+    
+    if winner_display_name == "TIE":
+        winner_text = "IT'S A TIE!"
+    else:
+        winner_text = f"WINNER: {winner_display_name}"
+
     p1_score = final_results.get("p1_results", {}).get("score", 0)
     p2_score = final_results.get("p2_results", {}).get("score", 0)
     score_text = f"Final Score: {p1_score} vs {p2_score}"

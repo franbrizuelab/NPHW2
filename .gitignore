@@ -3,3 +3,7 @@ common/config.py
 storage/users.json
 storage/gamelogs.json
 test_pieces.py
+rules.pdf
+rules_en.md
+__pycache__/
+common/__pycache__/
