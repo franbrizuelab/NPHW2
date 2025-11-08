@@ -474,15 +474,14 @@ def lobby_network_thread(host: str, port: int):
             # 3. Check for periodic refresh
             current_time = time.time()
             if (current_time - last_refresh_time > 2):
-                # Every 2 seconds, refresh lists IF we are in the lobby
-                #logging.info(f"Periodic refresh check. Current state: '{g_client_state}'")
                 with g_state_lock:
-                    is_in_lobby = (g_client_state == "LOBBY")
+                    current_state = g_client_state
                 
-                if is_in_lobby:
+                if current_state == "LOBBY":
                     send_to_lobby_queue({"action": "list_rooms"})
                     send_to_lobby_queue({"action": "list_users"})
-                    #logging.info(f"Updating room & users list")
+                elif current_state == "IN_ROOM":
+                    send_to_lobby_queue({"action": "list_users"})
                     
                 last_refresh_time = current_time
             
