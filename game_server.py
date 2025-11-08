@@ -179,7 +179,7 @@ def handle_game_end(clients: list, game_p1: TetrisGame, game_p2: TetrisGame, win
 def game_loop(clients: list, input_queue: queue.Queue, game_p1: TetrisGame, game_p2: TetrisGame, p1_user: str, p2_user: str, room_id: int):
     logging.info("Game loop started for 'Lines Over Time' mode.")
     start_time = time.time()
-    game_duration = 45  # GAME TIME VARIABLE
+    game_duration = 20  # GAME TIME VARIABLE
     winner = None
 
     last_gravity_tick_time = time.time()
@@ -251,6 +251,11 @@ def game_loop(clients: list, input_queue: queue.Queue, game_p1: TetrisGame, game
     # Force both games to be "over" so the final board state is accurate
     game_p1.game_over = True
     game_p2.game_over = True
+
+    # Send one final snapshot to make sure clients have the last board state
+    remaining_time = 0
+    broadcast_state(clients, game_p1, game_p2, remaining_time)
+    time.sleep(0.1) # Give clients a moment to process the final state
 
     handle_game_end(clients, game_p1, game_p2, winner, p1_user, p2_user, room_id)
 
