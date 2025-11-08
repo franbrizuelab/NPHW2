@@ -242,14 +242,14 @@ def game_loop(clients: list, input_queue: queue.Queue, game_p1: TetrisGame, game
     reason = ""
     loser_username = None
     if winner is None:  # This means time ran out
-        lines_p1 = game_p1.lines_cleared
-        lines_p2 = game_p2.lines_cleared
-        logging.info(f"Time's up! Final lines P1:{lines_p1} vs P2:{lines_p2}")
+        score_p1 = game_p1.score
+        score_p2 = game_p2.score
+        logging.info(f"Time's up! Final score P1:{score_p1} vs P2:{score_p2}")
         reason = "time_up"
-        if lines_p1 > lines_p2:
+        if score_p1 > score_p2:
             winner = "P1"
             loser_username = p2_user
-        elif lines_p2 > lines_p1:
+        elif score_p2 > score_p1:
             winner = "P2"
             loser_username = p1_user
         else:
@@ -268,11 +268,6 @@ def game_loop(clients: list, input_queue: queue.Queue, game_p1: TetrisGame, game
     # Force both games to be "over" so the final board state is accurate
     game_p1.game_over = True
     game_p2.game_over = True
-
-    # Send one final snapshot to make sure clients have the last board state
-    remaining_time = 0
-    broadcast_state(clients, game_p1, game_p2, remaining_time)
-    time.sleep(0.1) # Give clients a moment to process the final state
 
     handle_game_end(clients, game_p1, game_p2, winner, reason, loser_username, p1_user, p2_user, room_id)
 

@@ -467,7 +467,7 @@ def lobby_network_thread(host: str, port: int):
                     request = g_lobby_send_queue.get_nowait()
                     json_bytes = json.dumps(request).encode('utf-8')
                     protocol.send_msg(sock, json_bytes) # Send the message
-                    logging.info(f"rq: {request}")
+                    # logging.info(f"rq: {request}")
             except queue.Empty:
                 pass # No more messages to send
             
@@ -878,7 +878,7 @@ def main():
         "users_list": [],
         "invite_accept_btn": Button(300, 350, 140, 40, fonts["SMALL"], "Accept"),
         "invite_decline_btn": Button(460, 350, 140, 40, fonts["SMALL"], "Decline"),
-        "back_to_lobby_btn": Button(350, 400, 200, 50, fonts["SMALL"], "Back to Lobby"),
+        "back_to_lobby_btn": Button(350, 450, 200, 50, fonts["SMALL"], "Back to Lobby"),
         "login_focusable_elements": ["user_input", "pass_input", "login_btn", "reg_btn"]
     }
     # rrrrrr back to lobby button
