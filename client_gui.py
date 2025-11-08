@@ -15,6 +15,7 @@ import time
 import logging
 import queue
 import select
+import random
 
 # Add project root to path
 try:
@@ -24,6 +25,7 @@ try:
         sys.path.insert(0, parent_dir)
     from common import config
     from common import protocol
+    from common.game_rules import PIECE_SHAPES
 except ImportError:
     print("Error: Could not import common/protocol.py or common/config.py.")
     sys.exit(1)
@@ -97,6 +99,14 @@ CONFIG = {
     "NETWORK": {
         "HOST": config.LOBBY_HOST,
         "PORT": config.LOBBY_PORT
+    },
+    "BACKGROUND_ANIMATION": {
+        "NUM_PIECES": 20,
+        "MIN_SIZE": 10,
+        "MAX_SIZE": 50,
+        "MIN_SPEED": 0.5,
+        "MAX_SPEED": 4.0,
+        "ALPHA": 50 # 0-255
     }
 }
 
@@ -527,7 +537,6 @@ def draw_board(surface, board_data, x_start, y_start, block_size):
                 pygame.draw.rect(surface, grid_color, rect, 1)
 
 def draw_game_state(surface, fonts, state, ui_elements):
-    surface.fill(CONFIG["COLORS"]["BACKGROUND"])
     draw_text(surface, "Esc to exit", CONFIG["SCREEN"]["WIDTH"] - 120, 20, fonts["TINY"], CONFIG["COLORS"]["TEXT"])
 
     if state is None:
@@ -670,12 +679,13 @@ def draw_game_over_screen(surface, fonts, ui_elements, final_results, my_state, 
     ui_elements["back_to_lobby_btn"].draw(surface)
 
 def draw_login_screen(screen, fonts, ui_elements, blink_on):
-    screen.fill(CONFIG["COLORS"]["BACKGROUND"])
     draw_text(screen, "Welcome to Tetris", 250, 100, fonts["LARGE"], CONFIG["COLORS"]["TEXT"])
     
-    draw_text(screen, "Username:", 250, 200, fonts["SMALL"], CONFIG["COLORS"]["TEXT"])
+    form_center_x = CONFIG["SCREEN"]["WIDTH"] // 2
+    
+    draw_text(screen, "Username:", form_center_x - 150, 200, fonts["SMALL"], CONFIG["COLORS"]["TEXT"])
     ui_elements["user_input"].draw(screen)
-    draw_text(screen, "Password:", 250, 260, fonts["SMALL"], CONFIG["COLORS"]["TEXT"])
+    draw_text(screen, "Password:", form_center_x - 150, 260, fonts["SMALL"], CONFIG["COLORS"]["TEXT"])
     ui_elements["pass_input"].draw(screen)
     
     ui_elements["login_btn"].draw(screen, blink_on)
@@ -684,10 +694,18 @@ def draw_login_screen(screen, fonts, ui_elements, blink_on):
     with g_state_lock:
         error_msg = g_error_message
     if error_msg:
-        draw_text(screen, error_msg, 250, 400, fonts["MEDIUM"], CONFIG["COLORS"]["ERROR"])
+        error_x = form_center_x - fonts["MEDIUM"].size(error_msg)[0] // 2
+        draw_text(screen, error_msg, error_x, 400, fonts["MEDIUM"], CONFIG["COLORS"]["ERROR"])
+
+    # Add signature
+    signature_text = "franbrizuelab 2025"
+    signature_font = fonts["TINY"]
+    signature_color = (100, 100, 100) # A subtle grey
+    signature_x = CONFIG["SCREEN"]["WIDTH"] // 2 - signature_font.size(signature_text)[0] // 2
+    signature_y = CONFIG["SCREEN"]["HEIGHT"] - 30
+    draw_text(screen, signature_text, signature_x, signature_y, signature_font, signature_color)
 
 def draw_lobby_screen(screen, fonts, ui_elements):
-    screen.fill(CONFIG["COLORS"]["BACKGROUND"])
     draw_text(screen, f"Lobby - Welcome {g_username}", 50, 20, fonts["LARGE"], CONFIG["COLORS"]["TEXT"])
     
     ui_elements["create_room_btn"].draw(screen)
@@ -740,8 +758,6 @@ def draw_lobby_screen(screen, fonts, ui_elements):
             ui_elements["users_list"].append(btn)
 
 def draw_room_screen(screen, fonts, ui_elements):
-    screen.fill(CONFIG["COLORS"]["BACKGROUND"])
-    
     #draw_text(screen, "Esc to exit", CONFIG["SCREEN"]["WIDTH"] - 120, 20, None, 18, CONFIG["COLORS"]["TEXT"])
     draw_text(screen, "Esc to exit", CONFIG["SCREEN"]["WIDTH"] - 120, 20, fonts["TINY"], CONFIG["COLORS"]["TEXT"])
     
@@ -818,6 +834,73 @@ def draw_invite_popup(screen, fonts, ui_elements):
         ui_elements["invite_accept_btn"].draw(screen)
         ui_elements["invite_decline_btn"].draw(screen)
 
+# --- New Background Animation ---
+class FallingPiece:
+    def __init__(self, screen_width, screen_height):
+        self.screen_width = screen_width
+        self.screen_height = screen_height
+        self.config = CONFIG["BACKGROUND_ANIMATION"]
+        self.block_size = random.randint(self.config["MIN_SIZE"], self.config["MAX_SIZE"])
+        self.color = random.choice(CONFIG["COLORS"]["PIECE_COLORS"][1:])
+        self.speed = random.uniform(self.config["MIN_SPEED"], self.config["MAX_SPEED"])
+        self.shape_id = random.randint(0, len(PIECE_SHAPES) - 1)
+        self.rotation = random.randint(0, 3)
+        self.x = random.randint(0, self.screen_width)
+        self.y = random.uniform(-200, -50)
+
+    def _get_blocks(self):
+        """Get the (row, col) coordinates for the piece's current state."""
+        shapes = PIECE_SHAPES[self.shape_id]
+        shape = shapes[self.rotation % len(shapes)]
+        return [(self.y + r * self.block_size, self.x + c * self.block_size) for r, c in shape]
+
+    def update(self):
+        self.y += self.speed
+        if self.y > self.screen_height + 100:
+            self.reset()
+
+    def reset(self):
+        self.y = random.uniform(-200, -50)
+        self.x = random.randint(0, self.screen_width)
+        self.block_size = random.randint(self.config["MIN_SIZE"], self.config["MAX_SIZE"])
+        self.speed = random.uniform(self.config["MIN_SPEED"], self.config["MAX_SPEED"])
+        self.color = random.choice(CONFIG["COLORS"]["PIECE_COLORS"][1:])
+        self.shape_id = random.randint(0, len(PIECE_SHAPES) - 1)
+
+    def draw(self, surface):
+        blocks = self._get_blocks()
+        for r, c in blocks:
+            rect = pygame.Rect(c, r, self.block_size, self.block_size)
+            
+            # Create a temporary surface for each block to apply alpha
+            block_surf = pygame.Surface(rect.size, pygame.SRCALPHA)
+            
+            # Draw the semi-transparent fill
+            fill_color = self.color + (self.config["ALPHA"],)
+            pygame.draw.rect(block_surf, fill_color, block_surf.get_rect())
+            
+            # Draw the border (slightly more opaque)
+            border_color = self.color + (self.config["ALPHA"] + 50,) # Make border slightly more visible
+            pygame.draw.rect(block_surf, border_color, block_surf.get_rect(), 1)
+            
+            surface.blit(block_surf, rect.topleft)
+
+g_background_pieces = []
+
+def draw_background(surface):
+    surface.fill(CONFIG["COLORS"]["BACKGROUND"])
+    
+    global g_background_pieces
+    if not g_background_pieces:
+        # Initialize on first run
+        num_pieces = CONFIG["BACKGROUND_ANIMATION"]["NUM_PIECES"]
+        for _ in range(num_pieces):
+            g_background_pieces.append(FallingPiece(CONFIG["SCREEN"]["WIDTH"], CONFIG["SCREEN"]["HEIGHT"]))
+
+    for piece in g_background_pieces:
+        piece.update()
+        piece.draw(surface)
+
 import argparse
 
 def main():
@@ -866,11 +949,13 @@ def main():
         fonts["DEFAULT"] = fonts["SMALL"]
 
     # 3. Create UI elements
+    form_center_x = CONFIG["SCREEN"]["WIDTH"] // 2
+    input_width = 300
     ui_elements = {
-        "user_input": TextInput(250, 220, 300, 32, fonts["SMALL"]),
-        "pass_input": TextInput(250, 280, 300, 32, fonts["SMALL"]),
-        "login_btn": Button(250, 340, 140, 40, fonts["SMALL"], "Login"),
-        "reg_btn": Button(410, 340, 140, 40, fonts["SMALL"], "Register"),
+        "user_input": TextInput(form_center_x - input_width // 2, 220, input_width, 32, fonts["SMALL"]),
+        "pass_input": TextInput(form_center_x - input_width // 2, 280, input_width, 32, fonts["SMALL"]),
+        "login_btn": Button(form_center_x - 150, 340, 140, 40, fonts["SMALL"], "Login"),
+        "reg_btn": Button(form_center_x + 10, 340, 140, 40, fonts["SMALL"], "Register"),
         "create_room_btn": Button(50, 70, 200, 50, fonts["SMALL"], "Create Room"),
         "start_game_btn": Button(50, 400, 200, 50, fonts["SMALL"], "START GAME"),
         "rooms_list": [],
@@ -880,7 +965,6 @@ def main():
         "back_to_lobby_btn": Button(350, 450, 200, 50, fonts["SMALL"], "Back to Lobby"),
         "login_focusable_elements": ["user_input", "pass_input", "login_btn", "reg_btn"]
     }
-    # rrrrrr back to lobby button
 
     
     # 4. Start the lobby network thread.
@@ -1064,8 +1148,9 @@ def main():
         
         # Render Graphics
         fonts = CONFIG["FONTS"]["OBJECTS"]
+        draw_background(screen) # Draw the new animated background
+
         if current_client_state == "CONNECTING":
-            screen.fill(CONFIG["COLORS"]["BACKGROUND"])
             draw_text(screen, "Connecting to lobby...", 250, 300, fonts["TITLE"], CONFIG["COLORS"]["TEXT"])
         elif current_client_state == "LOGIN":
             draw_login_screen(screen, fonts, ui_elements, blink_on)
@@ -1076,10 +1161,9 @@ def main():
         elif current_client_state == "GAME":
             with g_state_lock:
                 state_copy = g_last_game_state.copy() if g_last_game_state else None
+            # We don't call draw_background here because draw_game_state does its own fill
             draw_game_state(screen, fonts, state_copy, ui_elements)
-
         elif current_client_state == "ERROR":
-            screen.fill(CONFIG["COLORS"]["BACKGROUND"])
             draw_text(screen, "Connection Error", 250, 100, fonts["GAME_OVER"], CONFIG["COLORS"]["ERROR"])
             with g_state_lock:
                 error_msg = g_error_message
