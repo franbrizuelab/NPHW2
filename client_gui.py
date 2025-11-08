@@ -638,8 +638,19 @@ def draw_game_over_screen(surface, fonts, ui_elements, final_results, my_state, 
     # 3. Extract results and determine reason
     winner_role = final_results.get('winner', 'Unknown')
     winner_display_name = final_results.get('winner_username', winner_role)
-    reason = final_results.get('reason', '')
-    
+    reason_code = final_results.get('reason', '')
+    loser_username = final_results.get('loser_username')
+
+    reason_text = reason_code # Default to the code
+    if reason_code == "board_full" and loser_username:
+        reason_text = f"{loser_username}'s board is full!"
+    elif reason_code == "forfeit" and loser_username:
+        reason_text = f"{loser_username} abandoned the game"
+    elif reason_code == "time_up":
+        reason_text = "Time's up!"
+    elif reason_code == "tie":
+        reason_text = "Tie game!"
+
     if winner_display_name == "TIE":
         winner_text = "IT'S A TIE!"
     else:
@@ -653,7 +664,7 @@ def draw_game_over_screen(surface, fonts, ui_elements, final_results, my_state, 
     draw_text(surface, "GAME OVER", pos["GAME_OVER_TEXT"][0], pos["GAME_OVER_TEXT"][1] - 60, fonts["GAME_OVER"], colors["GAME_OVER"])
     draw_text(surface, winner_text, pos["GAME_OVER_TEXT"][0], pos["GAME_OVER_TEXT"][1], fonts["LARGE"], colors["TEXT"])
     draw_text(surface, score_text, pos["GAME_OVER_TEXT"][0], pos["GAME_OVER_TEXT"][1] + 40, fonts["MEDIUM"], colors["TEXT"])
-    draw_text(surface, reason, pos["GAME_OVER_TEXT"][0], pos["GAME_OVER_TEXT"][1] + 80, fonts["MEDIUM"], colors["TEXT"])
+    draw_text(surface, reason_text, pos["GAME_OVER_TEXT"][0], pos["GAME_OVER_TEXT"][1] + 80, fonts["MEDIUM"], colors["TEXT"])
     ui_elements["back_to_lobby_btn"].draw(surface)
 
 def draw_login_screen(screen, fonts, ui_elements):
