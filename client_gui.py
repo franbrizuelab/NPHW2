@@ -71,8 +71,8 @@ CONFIG = {
         "GAME_OVER_TEXT": (100, 300)
     },
     "FONTS": {
-        "DEFAULT_FONT": None, "TITLE_SIZE": 30,
-        "SCORE_SIZE": 24, "GAME_OVER_SIZE": 50
+        "DEFAULT_FONT": 'assets/fonts/PressStart2P-Regular.ttf', "TITLE_SIZE": 25,
+        "SCORE_SIZE": 20, "GAME_OVER_SIZE": 40
     },
     "NETWORK": {
         "HOST": config.LOBBY_HOST,
@@ -154,7 +154,7 @@ class Button:
         color = self.color
         if self.rect.collidepoint(pygame.mouse.get_pos()):
             color = CONFIG["COLORS"]["BUTTON_HOVER"]
-        pygame.draw.rect(screen, color, self.rect, 0)
+        pygame.draw.rect(screen, color, self.rect, 0, border_radius=CONFIG["STYLE"]["CORNER_RADIUS"])
         
         text_surf = self.font.render(self.text, True, CONFIG["COLORS"]["TEXT"])
         text_rect = text_surf.get_rect(center=self.rect.center)
@@ -479,7 +479,7 @@ def lobby_network_thread(host: str, port: int):
 # Drawing Functions
 def draw_text(surface, text, x, y, font, size, color):
     try:
-        font_obj = pygame.font.Font(font, size)
+        font_obj = pygame.font.Font(font or CONFIG["FONTS"]["DEFAULT_FONT"], size)
         text_surface = font_obj.render(text, True, color)
         surface.blit(text_surface, (x, y))
     except Exception:
@@ -504,7 +504,7 @@ def draw_board(surface, board_data, x_start, y_start, block_size):
 
 def draw_game_state(surface, font_name, state, ui_elements):
     surface.fill(CONFIG["COLORS"]["BACKGROUND"])
-    draw_text(surface, "Esc to exit", CONFIG["SCREEN"]["WIDTH"] - 120, 20, None, 18, CONFIG["COLORS"]["TEXT"])
+    draw_text(screen, "Esc to exit", CONFIG["SCREEN"]["WIDTH"] - 120, 20, CONFIG["FONTS"]["DEFAULT_FONT"], 10, CONFIG["COLORS"]["TEXT"])
 
     if state is None:
         draw_text(surface, "Connecting... Waiting for state...", 100, 100, font_name, CONFIG["FONTS"]["TITLE_SIZE"], CONFIG["COLORS"]["TEXT"])
@@ -695,8 +695,9 @@ def draw_lobby_screen(screen, font_small, font_large, ui_elements):
 def draw_room_screen(screen, font_small, font_large, ui_elements):
     screen.fill(CONFIG["COLORS"]["BACKGROUND"])
     
-    draw_text(screen, "Esc to exit", CONFIG["SCREEN"]["WIDTH"] - 120, 20, None, 18, CONFIG["COLORS"]["TEXT"])
-
+    #draw_text(screen, "Esc to exit", CONFIG["SCREEN"]["WIDTH"] - 120, 20, None, 18, CONFIG["COLORS"]["TEXT"])
+    draw_text(screen, "Esc to exit", CONFIG["SCREEN"]["WIDTH"] - 120, 20, CONFIG["FONTS"]["DEFAULT_FONT"], 10, CONFIG["COLORS"]["TEXT"])
+    
     with g_state_lock:
         room_name = g_room_data.get("name", "Room")
         players = g_room_data.get("players", [])
@@ -795,8 +796,8 @@ def main():
     screen = pygame.display.set_mode(size=screen_size)
     pygame.display.set_caption("Networked Tetris")
     clock = pygame.time.Clock()
-    font_small = pygame.font.Font(None, 24)
-    font_large = pygame.font.Font(None, 36)
+    font_small = pygame.font.Font(CONFIG["FONTS"]["DEFAULT_FONT"], 15)
+    font_large = pygame.font.Font(CONFIG["FONTS"]["DEFAULT_FONT"], 36)
 
     # 3. Create UI elements
     ui_elements = {
