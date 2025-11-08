@@ -180,6 +180,7 @@ g_invite_popup = None # Stores invite data if one is received
 g_last_game_state = None
 g_game_over_results = None
 g_my_role = None # "P1" or "P2"
+g_user_acknowledged_game_over = False
 
 # Network Functions
 def send_to_lobby_queue(request: dict):
@@ -221,6 +222,7 @@ def game_network_thread(sock: socket.socket):
                     with g_state_lock:
                         g_last_game_state = snapshot
                 
+                # rrrrr Thread stops when game is over!!!!!!! >:0
                 elif msg_type == "GAME_OVER":
                     logging.info(f"Game over! Results: {snapshot}")
                     with g_state_lock:
@@ -245,21 +247,31 @@ def game_network_thread(sock: socket.socket):
         if g_running:
             logging.error(f"Error in game network thread: {e}")
     finally:
+        logging.info("Game network thread waiting for user confirmation...")
+        
+        # Wait until the user clicks the "Back to Lobby" button
+        global g_user_acknowledged_game_over
+        while g_running and not g_user_acknowledged_game_over:
+            time.sleep(0.1)
+
         logging.info("Game network thread exiting.")
         with g_state_lock:
-            # Reset all game state and return to lobby
-            #logging.info("Setting back state to 'LOBBY'.")
-            g_client_state = "LOBBY"
+            # Reset all game state
             if g_game_socket:
                 g_game_socket.close()
             g_game_socket = None
             g_last_game_state = None
             g_game_over_results = None
             g_my_role = None
+            g_user_acknowledged_game_over = False # Reset for the next game
+
+            # The button click already set the state, but we can ensure it
+            g_client_state = "LOBBY"
+            
             # Refresh lobby lists now that we're back
             send_to_lobby_queue({"action": "list_rooms"})
             send_to_lobby_queue({"action": "list_users"})
-            #logging.info("State switched back to 'LOBBY'.")
+            logging.info("State switched back to 'LOBBY'.")
 
 def lobby_network_thread(host: str, port: int):
     """
@@ -320,7 +332,7 @@ def lobby_network_thread(host: str, port: int):
                     break
                 
                 msg = json.loads(data_bytes.decode('utf-8'))
-                logging.info(f"(lobby): {msg}") # Log the received message
+                #logging.info(f"(lobby): {msg}") # Log the received message
                 msg_type = msg.get("type")
             
                 if msg_type == "ROOM_UPDATE":
@@ -442,7 +454,7 @@ def lobby_network_thread(host: str, port: int):
                 if is_in_lobby:
                     send_to_lobby_queue({"action": "list_rooms"})
                     send_to_lobby_queue({"action": "list_users"})
-                    logging.info(f"Updating room & users list")
+                    #logging.info(f"Updating room & users list")
                     
                 last_refresh_time = current_time
             
@@ -486,7 +498,7 @@ def draw_board(surface, board_data, x_start, y_start, block_size):
                 # For empty cells, draw the faint grid line
                 pygame.draw.rect(surface, grid_color, rect, 1)
 
-def draw_game_state(surface, font_name, state):
+def draw_game_state(surface, font_name, state, ui_elements):
     surface.fill(CONFIG["COLORS"]["BACKGROUND"])
     draw_text(surface, "Esc to exit", CONFIG["SCREEN"]["WIDTH"] - 120, 20, None, 18, CONFIG["COLORS"]["TEXT"])
 
@@ -527,7 +539,7 @@ def draw_game_state(surface, font_name, state):
             if y >= 0:
                 surface.blit(block_surface, (pos["OPPONENT_BOARD"][0] + x * sizes["SMALL_BLOCK_SIZE"], pos["OPPONENT_BOARD"][1] + y * sizes["SMALL_BLOCK_SIZE"]))
 
-    # --- Score and Lines Display ---
+    # Score and Lines Display
     font_obj = pygame.font.Font(font_name, fonts["SCORE_SIZE"])
     
     # My Score (Label left, Value right)
@@ -571,27 +583,43 @@ def draw_game_state(surface, font_name, state):
     final_results = None
     with g_state_lock:
         if g_game_over_results: final_results = g_game_over_results
+
     if final_results:
-        winner = final_results.get('winner', 'Unknown')
-        winner_text = f"WINNER: {winner}"
-        p1_score = final_results.get("p1_results", {}).get("score", 0)
-        p2_score = final_results.get("p2_results", {}).get("score", 0)
-        score_text = f"Final Score: {p1_score} vs {p2_score}"
-
-        reason = ""
-        if my_state.get("game_over", False):
-            reason = "Your board is full!"
-        elif opponent_state.get("game_over", False):
-            reason = "Opponent's board is full!"
-
-        draw_text(surface, "GAME OVER", pos["GAME_OVER_TEXT"][0], pos["GAME_OVER_TEXT"][1] - 60, font_name, fonts["GAME_OVER_SIZE"], colors["GAME_OVER"])
-        draw_text(surface, winner_text, pos["GAME_OVER_TEXT"][0], pos["GAME_OVER_TEXT"][1], font_name, fonts["TITLE_SIZE"], colors["TEXT"])
-        draw_text(surface, score_text, pos["GAME_OVER_TEXT"][0], pos["GAME_OVER_TEXT"][1] + 40, font_name, fonts["SCORE_SIZE"], colors["TEXT"])
-        draw_text(surface, reason, pos["GAME_OVER_TEXT"][0], pos["GAME_OVER_TEXT"][1] + 80, font_name, fonts["SCORE_SIZE"], colors["TEXT"])
-        ui_elements["back_to_lobby_btn"].draw(surface) # Draw the button
+        draw_game_over_screen(surface, font_name, ui_elements, final_results, my_state, opponent_state)
 
     elif my_state.get("game_over", False):
         draw_text(surface, "GAME OVER", pos["GAME_OVER_TEXT"][0], pos["GAME_OVER_TEXT"][1], font_name, fonts["GAME_OVER_SIZE"], colors["GAME_OVER"])
+
+def draw_game_over_screen(surface, font_name, ui_elements, final_results, my_state, opponent_state):
+    """Draws a semi-transparent overlay and the game over results."""
+    
+    # 1. Draw semi-transparent overlay
+    overlay = pygame.Surface((CONFIG["SCREEN"]["WIDTH"], CONFIG["SCREEN"]["HEIGHT"]), pygame.SRCALPHA)
+    overlay.fill((20, 20, 30, 200)) # Dark, semi-transparent background
+    surface.blit(overlay, (0, 0))
+
+    # 2. Get config shortcuts
+    pos = CONFIG["POSITIONS"]; colors = CONFIG["COLORS"]; fonts = CONFIG["FONTS"]
+
+    # 3. Extract results and determine reason
+    winner = final_results.get('winner', 'Unknown')
+    winner_text = f"WINNER: {winner}"
+    p1_score = final_results.get("p1_results", {}).get("score", 0)
+    p2_score = final_results.get("p2_results", {}).get("score", 0)
+    score_text = f"Final Score: {p1_score} vs {p2_score}"
+
+    reason = ""
+    if my_state.get("game_over", False):
+        reason = "Your board is full!"
+    elif opponent_state.get("game_over", False):
+        reason = "Opponent's board is full!"
+
+    # 4. Draw the text and button
+    draw_text(surface, "GAME OVER", pos["GAME_OVER_TEXT"][0], pos["GAME_OVER_TEXT"][1] - 60, font_name, fonts["GAME_OVER_SIZE"], colors["GAME_OVER"])
+    draw_text(surface, winner_text, pos["GAME_OVER_TEXT"][0], pos["GAME_OVER_TEXT"][1], font_name, fonts["TITLE_SIZE"], colors["TEXT"])
+    draw_text(surface, score_text, pos["GAME_OVER_TEXT"][0], pos["GAME_OVER_TEXT"][1] + 40, font_name, fonts["SCORE_SIZE"], colors["TEXT"])
+    draw_text(surface, reason, pos["GAME_OVER_TEXT"][0], pos["GAME_OVER_TEXT"][1] + 80, font_name, fonts["SCORE_SIZE"], colors["TEXT"])
+    ui_elements["back_to_lobby_btn"].draw(surface)
 
 def draw_login_screen(screen, font_small, font_large, ui_elements):
     screen.fill(CONFIG["COLORS"]["BACKGROUND"])
@@ -766,9 +794,10 @@ def main():
         "invite_decline_btn": Button(460, 350, 140, 40, font_small, "Decline"),
         "back_to_lobby_btn": Button(350, 400, 200, 50, font_small, "Back to Lobby"),
     }
+    # rrrrrr back to lobby button
+
     
-    # 4. Start the lobby network thread
-    # The thread will handle the connection itself.
+    # 4. Start the lobby network thread.
     host = CONFIG["NETWORK"]["HOST"]
     port = CONFIG["NETWORK"]["PORT"]
     threading.Thread(
@@ -814,7 +843,6 @@ def main():
                 elif ui_elements["invite_decline_btn"].handle_event(event):
                     with g_state_lock:
                         g_invite_popup = None # Close popup
-            # Skip all other event processing
             
         else:
             # NORMAL EVENT PROCESSING
@@ -857,7 +885,6 @@ def main():
                                 "data": {"target_user": user_btn.username}
                             })
                 
-                # rrrrr
                 elif current_client_state == "IN_ROOM":
                     if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                         send_to_lobby_queue({"action": "leave_room"})
@@ -892,9 +919,11 @@ def main():
                     
                     if game_is_over:
                         if ui_elements["back_to_lobby_btn"].handle_event(event):
+                            global g_user_acknowledged_game_over
                             with g_state_lock:
                                 g_client_state = "LOBBY"
-                                g_game_over_results = None # Reset for next game
+                                g_user_acknowledged_game_over = True
+                                # The game network thread will now clean up g_game_over_results
         
         # Render Graphics
         if current_client_state == "CONNECTING":
@@ -909,7 +938,8 @@ def main():
         elif current_client_state == "GAME":
             with g_state_lock:
                 state_copy = g_last_game_state.copy() if g_last_game_state else None
-            draw_game_state(screen, CONFIG["FONTS"]["DEFAULT_FONT"], state_copy)
+            draw_game_state(screen, CONFIG["FONTS"]["DEFAULT_FONT"], state_copy, ui_elements)
+
         elif current_client_state == "ERROR":
             screen.fill(CONFIG["COLORS"]["BACKGROUND"])
             draw_text(screen, "Connection Error", 250, 100, None, 50, CONFIG["COLORS"]["ERROR"])
