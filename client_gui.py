@@ -681,9 +681,11 @@ def draw_game_over_screen(surface, fonts, ui_elements, final_results, my_state, 
 def draw_login_screen(screen, fonts, ui_elements, blink_on):
     draw_text(screen, "Welcome to Tetris", 250, 100, fonts["LARGE"], CONFIG["COLORS"]["TEXT"])
     
-    draw_text(screen, "Username:", 250, 200, fonts["SMALL"], CONFIG["COLORS"]["TEXT"])
+    form_center_x = CONFIG["SCREEN"]["WIDTH"] // 2
+    
+    draw_text(screen, "Username:", form_center_x - 150, 200, fonts["SMALL"], CONFIG["COLORS"]["TEXT"])
     ui_elements["user_input"].draw(screen)
-    draw_text(screen, "Password:", 250, 260, fonts["SMALL"], CONFIG["COLORS"]["TEXT"])
+    draw_text(screen, "Password:", form_center_x - 150, 260, fonts["SMALL"], CONFIG["COLORS"]["TEXT"])
     ui_elements["pass_input"].draw(screen)
     
     ui_elements["login_btn"].draw(screen, blink_on)
@@ -692,7 +694,16 @@ def draw_login_screen(screen, fonts, ui_elements, blink_on):
     with g_state_lock:
         error_msg = g_error_message
     if error_msg:
-        draw_text(screen, error_msg, 250, 400, fonts["MEDIUM"], CONFIG["COLORS"]["ERROR"])
+        error_x = form_center_x - fonts["MEDIUM"].size(error_msg)[0] // 2
+        draw_text(screen, error_msg, error_x, 400, fonts["MEDIUM"], CONFIG["COLORS"]["ERROR"])
+
+    # Add signature
+    signature_text = "franbrizuelab 2025"
+    signature_font = fonts["TINY"]
+    signature_color = (100, 100, 100) # A subtle grey
+    signature_x = CONFIG["SCREEN"]["WIDTH"] // 2 - signature_font.size(signature_text)[0] // 2
+    signature_y = CONFIG["SCREEN"]["HEIGHT"] - 30
+    draw_text(screen, signature_text, signature_x, signature_y, signature_font, signature_color)
 
 def draw_lobby_screen(screen, fonts, ui_elements):
     draw_text(screen, f"Lobby - Welcome {g_username}", 50, 20, fonts["LARGE"], CONFIG["COLORS"]["TEXT"])
@@ -938,11 +949,13 @@ def main():
         fonts["DEFAULT"] = fonts["SMALL"]
 
     # 3. Create UI elements
+    form_center_x = CONFIG["SCREEN"]["WIDTH"] // 2
+    input_width = 300
     ui_elements = {
-        "user_input": TextInput(250, 220, 300, 32, fonts["SMALL"]),
-        "pass_input": TextInput(250, 280, 300, 32, fonts["SMALL"]),
-        "login_btn": Button(250, 340, 140, 40, fonts["SMALL"], "Login"),
-        "reg_btn": Button(410, 340, 140, 40, fonts["SMALL"], "Register"),
+        "user_input": TextInput(form_center_x - input_width // 2, 220, input_width, 32, fonts["SMALL"]),
+        "pass_input": TextInput(form_center_x - input_width // 2, 280, input_width, 32, fonts["SMALL"]),
+        "login_btn": Button(form_center_x - 150, 340, 140, 40, fonts["SMALL"], "Login"),
+        "reg_btn": Button(form_center_x + 10, 340, 140, 40, fonts["SMALL"], "Register"),
         "create_room_btn": Button(50, 70, 200, 50, fonts["SMALL"], "Create Room"),
         "start_game_btn": Button(50, 400, 200, 50, fonts["SMALL"], "START GAME"),
         "rooms_list": [],
@@ -952,7 +965,6 @@ def main():
         "back_to_lobby_btn": Button(350, 450, 200, 50, fonts["SMALL"], "Back to Lobby"),
         "login_focusable_elements": ["user_input", "pass_input", "login_btn", "reg_btn"]
     }
-    # rrrrrr back to lobby button
 
     
     # 4. Start the lobby network thread.
