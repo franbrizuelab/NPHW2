@@ -154,7 +154,8 @@ class TextInput:
             self.text_surface = self.font.render(self.text, True, CONFIG["COLORS"]["INPUT_TEXT"])
     
     def draw(self, screen):
-        pygame.draw.rect(screen, self.color, self.rect, 0)
+        pygame.draw.rect(screen, self.color, self.rect, 0, border_radius=CONFIG["STYLE"]["CORNER_RADIUS"])
+        pygame.draw.rect(screen, CONFIG["COLORS"]["TEXT"], self.rect, 1, border_radius=CONFIG["STYLE"]["CORNER_RADIUS"]) # Thin border
         screen.blit(self.text_surface, (self.rect.x + 5, self.rect.y + 5))
 
 class Button:
@@ -163,6 +164,7 @@ class Button:
         self.color = CONFIG["COLORS"]["BUTTON"]
         self.text = text
         self.font = font
+        self.is_focused = False
     
     def handle_event(self, event):
         if event.type == pygame.MOUSEBUTTONDOWN:
@@ -170,15 +172,16 @@ class Button:
                 return True
         return False
         
-    def draw(self, screen):
+    def draw(self, screen, blink_on=True):
         color = self.color
-        if self.rect.collidepoint(pygame.mouse.get_pos()):
+        if self.rect.collidepoint(pygame.mouse.get_pos()) or self.is_focused:
             color = CONFIG["COLORS"]["BUTTON_HOVER"]
         pygame.draw.rect(screen, color, self.rect, 0, border_radius=CONFIG["STYLE"]["CORNER_RADIUS"])
         
-        text_surf = self.font.render(self.text, True, CONFIG["COLORS"]["TEXT"])
-        text_rect = text_surf.get_rect(center=self.rect.center)
-        screen.blit(text_surf, text_rect)
+        if not self.is_focused or (self.is_focused and blink_on):
+            text_surf = self.font.render(self.text, True, CONFIG["COLORS"]["TEXT"])
+            text_rect = text_surf.get_rect(center=self.rect.center)
+            screen.blit(text_surf, text_rect)
 
 
 
@@ -667,17 +670,17 @@ def draw_game_over_screen(surface, fonts, ui_elements, final_results, my_state, 
     draw_text(surface, reason_text, pos["GAME_OVER_TEXT"][0], pos["GAME_OVER_TEXT"][1] + 80, fonts["MEDIUM"], colors["TEXT"])
     ui_elements["back_to_lobby_btn"].draw(surface)
 
-def draw_login_screen(screen, fonts, ui_elements):
+def draw_login_screen(screen, fonts, ui_elements, blink_on):
     screen.fill(CONFIG["COLORS"]["BACKGROUND"])
     draw_text(screen, "Welcome to Tetris", 250, 100, fonts["LARGE"], CONFIG["COLORS"]["TEXT"])
     
-    draw_text(screen, "Username:", 250, 200, fonts["MEDIUM"], CONFIG["COLORS"]["TEXT"])
+    draw_text(screen, "Username:", 250, 200, fonts["SMALL"], CONFIG["COLORS"]["TEXT"])
     ui_elements["user_input"].draw(screen)
-    draw_text(screen, "Password:", 250, 260, fonts["MEDIUM"], CONFIG["COLORS"]["TEXT"])
+    draw_text(screen, "Password:", 250, 260, fonts["SMALL"], CONFIG["COLORS"]["TEXT"])
     ui_elements["pass_input"].draw(screen)
     
-    ui_elements["login_btn"].draw(screen)
-    ui_elements["reg_btn"].draw(screen)
+    ui_elements["login_btn"].draw(screen, blink_on)
+    ui_elements["reg_btn"].draw(screen, blink_on)
     
     with g_state_lock:
         error_msg = g_error_message
@@ -876,6 +879,7 @@ def main():
         "invite_accept_btn": Button(300, 350, 140, 40, fonts["SMALL"], "Accept"),
         "invite_decline_btn": Button(460, 350, 140, 40, fonts["SMALL"], "Decline"),
         "back_to_lobby_btn": Button(350, 400, 200, 50, fonts["SMALL"], "Back to Lobby"),
+        "login_focusable_elements": ["user_input", "pass_input", "login_btn", "reg_btn"]
     }
     # rrrrrr back to lobby button
 
@@ -899,6 +903,10 @@ def main():
         g_username = args.user
 
     # 6. Main Game Loop (State Machine)
+    focused_element_idx = 0 # For login screen navigation
+    last_blink_time = 0
+    blink_on = True
+    
     while g_running:
         
         # Handle Input Events
@@ -908,6 +916,13 @@ def main():
         with g_state_lock:
             popup_active = (g_invite_popup is not None)
             current_client_state = g_client_state
+        
+        # Handle blinking for focused buttons
+        if current_client_state == "LOGIN":
+            current_time = time.time()
+            if current_time - last_blink_time > 0.5:
+                blink_on = not blink_on
+                last_blink_time = current_time
         
         if popup_active:
             # POPUP IS ACTIVE
@@ -935,18 +950,58 @@ def main():
 
                 # Pass events to the correct handler based on state
                 if current_client_state == "LOGIN":
-                    ui_elements["user_input"].handle_event(event)
-                    ui_elements["pass_input"].handle_event(event)
-                    
-                    if ui_elements["login_btn"].handle_event(event):
-                        user = ui_elements["user_input"].text
-                        g_username = user # Store username
-                        send_to_lobby_queue({"action": "login", "data": {"user": user, "pass": ui_elements["pass_input"].text}})
-                        with g_state_lock:
-                            g_error_message = None # Clear old errors
+                    if event.type == pygame.KEYDOWN:
+                        if event.key == pygame.K_TAB:
+                            focused_element_idx = (focused_element_idx + 1) % len(ui_elements["login_focusable_elements"])
+                            # Deactivate all text inputs, then activate the focused one if it's a text input
+                            ui_elements["user_input"].active = False
+                            ui_elements["pass_input"].active = False
+                            ui_elements["login_btn"].is_focused = False
+                            ui_elements["reg_btn"].is_focused = False
+
+                            current_focused_name = ui_elements["login_focusable_elements"][focused_element_idx]
+                            focused_element = ui_elements[current_focused_name]
+
+                            if isinstance(focused_element, TextInput):
+                                focused_element.active = True
+                                focused_element.color = CONFIG["COLORS"]["INPUT_ACTIVE"]
+                            elif isinstance(focused_element, Button):
+                                focused_element.is_focused = True
+                            
+                            # Reset colors for non-focused text inputs
+                            if current_focused_name != "user_input":
+                                ui_elements["user_input"].color = CONFIG["COLORS"]["INPUT_BOX"]
+                            if current_focused_name != "pass_input":
+                                ui_elements["pass_input"].color = CONFIG["COLORS"]["INPUT_BOX"]
+
+                        elif event.key == pygame.K_RETURN:
+                            current_focused_name = ui_elements["login_focusable_elements"][focused_element_idx]
+                            if current_focused_name == "login_btn":
+                                user = ui_elements["user_input"].text
+                                g_username = user # Store username
+                                send_to_lobby_queue({"action": "login", "data": {"user": user, "pass": ui_elements["pass_input"].text}})
+                                with g_state_lock:
+                                    g_error_message = None # Clear old errors
+                            elif current_focused_name == "reg_btn":
+                                send_to_lobby_queue({"action": "register", "data": {"user": ui_elements["user_input"].text, "pass": ui_elements["pass_input"].text}})
+                        else:
+                            ui_elements["user_input"].handle_event(event)
+                            ui_elements["pass_input"].handle_event(event)
+                    else:
+                        # Handle mouse clicks for login/register buttons
+                        if ui_elements["login_btn"].handle_event(event):
+                            user = ui_elements["user_input"].text
+                            g_username = user # Store username
+                            send_to_lobby_queue({"action": "login", "data": {"user": user, "pass": ui_elements["pass_input"].text}})
+                            with g_state_lock:
+                                g_error_message = None # Clear old errors
+                            
+                        if ui_elements["reg_btn"].handle_event(event):
+                            send_to_lobby_queue({"action": "register", "data": {"user": ui_elements["user_input"].text, "pass": ui_elements["pass_input"].text}})
                         
-                    if ui_elements["reg_btn"].handle_event(event):
-                        send_to_lobby_queue({"action": "register", "data": {"user": ui_elements["user_input"].text, "pass": ui_elements["pass_input"].text}})
+                        # Also handle mouse clicks on text inputs
+                        ui_elements["user_input"].handle_event(event)
+                        ui_elements["pass_input"].handle_event(event)
 
                 elif current_client_state == "LOBBY":
                     if ui_elements["create_room_btn"].handle_event(event):
@@ -1014,7 +1069,7 @@ def main():
             screen.fill(CONFIG["COLORS"]["BACKGROUND"])
             draw_text(screen, "Connecting to lobby...", 250, 300, fonts["TITLE"], CONFIG["COLORS"]["TEXT"])
         elif current_client_state == "LOGIN":
-            draw_login_screen(screen, fonts, ui_elements)
+            draw_login_screen(screen, fonts, ui_elements, blink_on)
         elif current_client_state == "LOBBY":
             draw_lobby_screen(screen, fonts, ui_elements)
         elif current_client_state == "IN_ROOM":
