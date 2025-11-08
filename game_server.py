@@ -118,7 +118,7 @@ def process_input(game: TetrisGame, action: str):
 
 # UPDATE SIGNATURE
 # rrrrr
-def handle_game_end(clients: list, game_p1: TetrisGame, game_p2: TetrisGame, winner: str, p1_user: str, p2_user: str, room_id: int):
+def handle_game_end(clients: list, game_p1: TetrisGame, game_p2: TetrisGame, winner: str, reason: str, p1_user: str, p2_user: str, room_id: int):
     """
     Handles all end-of-game logic:
     1. Builds the GameLog.
@@ -126,7 +126,7 @@ def handle_game_end(clients: list, game_p1: TetrisGame, game_p2: TetrisGame, win
     3. Sends the final GAME_OVER message to both clients.
     4. Notifies the lobby server that the game is over.
     """
-    logging.info(f"Game loop finished. Winner: {winner}")
+    logging.info(f"Game loop finished. Winner: {winner}, Reason: {reason}")
     
     # 1. Build GameLog
     p1_results = {"userId": p1_user, "score": game_p1.score, "lines": game_p1.lines_cleared}
@@ -160,6 +160,7 @@ def handle_game_end(clients: list, game_p1: TetrisGame, game_p2: TetrisGame, win
     game_over_msg = {
         "type": "GAME_OVER",
         "winner": winner,
+        "reason": reason,
         "winner_username": winner_username,
         "p1_results": p1_results,
         "p2_results": p2_results,
@@ -236,17 +237,26 @@ def game_loop(clients: list, input_queue: queue.Queue, game_p1: TetrisGame, game
         time.sleep(0.01)
 
     # --- Loop has ended, determine the final winner ---
+    reason = ""
     if winner is None:  # This means time ran out
         lines_p1 = game_p1.lines_cleared
         lines_p2 = game_p2.lines_cleared
         logging.info(f"Time's up! Final lines P1:{lines_p1} vs P2:{lines_p2}")
-
+        reason = "time_up"
         if lines_p1 > lines_p2:
             winner = "P1"
         elif lines_p2 > lines_p1:
             winner = "P2"
         else:
             winner = "TIE"
+            reason = "tie"
+    else:
+        # This means someone topped out or forfeited
+        if game_p1.game_over or game_p2.game_over:
+            reason = "board_full"
+        else:
+            reason = "forfeit"
+
 
     # Force both games to be "over" so the final board state is accurate
     game_p1.game_over = True
@@ -257,7 +267,7 @@ def game_loop(clients: list, input_queue: queue.Queue, game_p1: TetrisGame, game
     broadcast_state(clients, game_p1, game_p2, remaining_time)
     time.sleep(0.1) # Give clients a moment to process the final state
 
-    handle_game_end(clients, game_p1, game_p2, winner, p1_user, p2_user, room_id)
+    handle_game_end(clients, game_p1, game_p2, winner, reason, p1_user, p2_user, room_id)
 
 def forward_to_db(request: dict) -> dict | None:
     """Acts as a client to the DB_Server."""
