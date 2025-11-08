@@ -64,13 +64,13 @@ CONFIG = {
         ]
     },
     "POSITIONS": {
-        "MY_BOARD": (50, 50), "OPPONENT_BOARD": (550, 100),
+        "MY_BOARD": (50, 50), "OPPONENT_BOARD": (640, 100),
         "MY_SCORE":       (370, 50),
         "MY_LINES":       (370, 80),
         "TIME":           (370, 110),
         "NEXT_PIECE":     (370, 150),
-        "OPPONENT_SCORE": (550, 50),
-        "OPPONENT_LINES": (550, 75), 
+        "OPPONENT_SCORE": (640, 50),
+        "OPPONENT_LINES": (600, 75), 
         "GAME_OVER_TEXT": (100, 300),
         "USERS_BOX_RECT": (440, 190, 370, 420) # X, Y, Width, Height
     },
@@ -569,7 +569,7 @@ def draw_game_state(surface, fonts, state, ui_elements):
     font_obj = fonts["MEDIUM"]
     
     # My Score (Label left, Value right)
-    my_right_edge = pos["MY_SCORE"][0] + 160
+    my_right_edge = pos["MY_SCORE"][0] + 240
     draw_text(surface, "SCORE", pos["MY_SCORE"][0], pos["MY_SCORE"][1], font_obj, colors["TEXT"])
     score_surf = font_obj.render(str(my_state.get("score", 0)), True, colors["TEXT"])
     score_rect = score_surf.get_rect(topright=(my_right_edge, pos["MY_SCORE"][1]))
@@ -798,13 +798,13 @@ def draw_invite_popup(screen, fonts, ui_elements):
         screen.blit(overlay, (0, 0))
         
         # Draw popup box
-        popup_rect = pygame.Rect(250, 250, 400, 160)
+        popup_rect = pygame.Rect(200, 250, 600, 160)
         pygame.draw.rect(screen, CONFIG["COLORS"]["BACKGROUND"], popup_rect)
         pygame.draw.rect(screen, CONFIG["COLORS"]["TEXT"], popup_rect, 2)
         
         # Draw text
         inv_text = f"{popup_data['from_user']} invited you to a game!"
-        draw_text(screen, inv_text, 270, 290, fonts["LARGE"], CONFIG["COLORS"]["TEXT"])
+        draw_text(screen, inv_text, 220, 290, fonts["MEDIUM"], CONFIG["COLORS"]["TEXT"])
         
         # Draw buttons
         ui_elements["invite_accept_btn"].draw(screen)
