@@ -709,6 +709,7 @@ def draw_lobby_screen(screen, fonts, ui_elements):
     draw_text(screen, f"Lobby - Welcome {g_username}", 50, 20, fonts["LARGE"], CONFIG["COLORS"]["TEXT"])
     
     ui_elements["create_room_btn"].draw(screen)
+    ui_elements["records_btn"].draw(screen)
     
     draw_text(screen, "Rooms:", 50, 150, fonts["MEDIUM"], CONFIG["COLORS"]["TEXT"])
     draw_text(screen, "Users:", 450, 150, fonts["MEDIUM"], CONFIG["COLORS"]["TEXT"])
@@ -756,6 +757,10 @@ def draw_lobby_screen(screen, fonts, ui_elements):
         
         if is_inviteable:
             ui_elements["users_list"].append(btn)
+
+def draw_records_screen(screen, fonts):
+    draw_text(screen, "Records", 50, 20, fonts["LARGE"], CONFIG["COLORS"]["TEXT"])
+    draw_text(screen, "Esc to exit", CONFIG["SCREEN"]["WIDTH"] - 120, 20, fonts["TINY"], CONFIG["COLORS"]["TEXT"])
 
 def draw_room_screen(screen, fonts, ui_elements):
     #draw_text(screen, "Esc to exit", CONFIG["SCREEN"]["WIDTH"] - 120, 20, None, 18, CONFIG["COLORS"]["TEXT"])
@@ -957,6 +962,7 @@ def main():
         "login_btn": Button(form_center_x - 150, 340, 140, 40, fonts["SMALL"], "Login"),
         "reg_btn": Button(form_center_x + 10, 340, 140, 40, fonts["SMALL"], "Register"),
         "create_room_btn": Button(50, 70, 200, 50, fonts["SMALL"], "Create Room"),
+        "records_btn": Button(260, 70, 200, 50, fonts["SMALL"], "Records"),
         "start_game_btn": Button(50, 400, 200, 50, fonts["SMALL"], "START GAME"),
         "rooms_list": [],
         "users_list": [],
@@ -1092,6 +1098,10 @@ def main():
                         with g_state_lock:
                             g_client_state = "IN_ROOM" # Optimistesic state change
                     
+                    if ui_elements["records_btn"].handle_event(event):
+                        with g_state_lock:
+                            g_client_state = "RECORDS"
+
                     for room_btn in ui_elements["rooms_list"]:
                         if room_btn.handle_event(event):
                             send_to_lobby_queue({"action": "join_room", "data": {"room_id": room_btn.room_id}})
@@ -1106,6 +1116,11 @@ def main():
                                 "data": {"target_user": user_btn.username}
                             })
                 
+                elif current_client_state == "RECORDS":
+                    if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                        with g_state_lock:
+                            g_client_state = "LOBBY"
+
                 elif current_client_state == "IN_ROOM":
                     if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                         send_to_lobby_queue({"action": "leave_room"})
@@ -1156,6 +1171,8 @@ def main():
             draw_login_screen(screen, fonts, ui_elements, blink_on)
         elif current_client_state == "LOBBY":
             draw_lobby_screen(screen, fonts, ui_elements)
+        elif current_client_state == "RECORDS":
+            draw_records_screen(screen, fonts)
         elif current_client_state == "IN_ROOM":
             draw_room_screen(screen, fonts, ui_elements)
         elif current_client_state == "GAME":
