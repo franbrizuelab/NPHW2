@@ -639,7 +639,7 @@ def handle_client(client_sock: socket.socket, addr: tuple):
             # 1. Receive a message
             request_bytes = recv_msg(client_sock)
             if request_bytes is None:
-                # Client disconnected gracefully (or network error)
+                # Client disconnected (or network error)
                 logging.info(f"Client {addr} disconnected.")
                 break
                 
@@ -647,6 +647,7 @@ def handle_client(client_sock: socket.socket, addr: tuple):
             try:
                 request_str = request_bytes.decode('utf-8')
                 request = json.loads(request_str)
+                logging.info(f"rx: {request}")
                 action = request.get('action')
                 data = request.get('data', {})
             except (UnicodeDecodeError, json.JSONDecodeError) as e:
@@ -656,7 +657,7 @@ def handle_client(client_sock: socket.socket, addr: tuple):
 
             # 3. Process the action
             
-            # Actions allowed *before* login
+            # Actions allowed BEFORE login
             if username is None:
                 if action == 'register':
                     response = handle_register(client_sock, data)
@@ -672,7 +673,7 @@ def handle_client(client_sock: socket.socket, addr: tuple):
                 else:
                     send_to_client(client_sock, {"status": "error", "reason": "must_be_logged_in"})
             
-            # Actions allowed *after* login
+            # Actions allowed AFTER login
             else:
                 if action == 'logout':
                     break # Break the loop, 'finally' will clean up
@@ -703,6 +704,20 @@ def handle_client(client_sock: socket.socket, addr: tuple):
                     room_id = data.get('room_id')
                     if room_id is not None:
                         handle_game_over(room_id)
+
+                elif action == 'query_gamelogs':
+                    logging.info(f"Received query_gamelogs request from {username}")
+                    db_request = {
+                        "collection": "GameLog",
+                        "action": "query",
+                        "data": data
+                    }
+                    db_response = forward_to_db(db_request)
+                    if db_response and db_response.get("status") == "ok":
+                        send_to_client(client_sock, {"type": "gamelog_response", "logs": db_response.get("logs", [])})
+                    else:
+                        send_to_client(client_sock, {"status": "error", "reason": "failed_to_fetch_gamelogs"})
+
 
                 else:
                     send_to_client(client_sock, {"status": "error", "reason": f"unknown_action: {action}"})

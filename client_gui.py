@@ -16,6 +16,7 @@ import logging
 import queue
 import select
 import random
+import records_screen
 
 # Add project root to path
 try:
@@ -276,8 +277,10 @@ def game_network_thread(sock: socket.socket):
             try:
                 while not g_game_send_queue.empty():
                     request = g_game_send_queue.get_nowait()
+                    logging.info(f"rq: {request}")
                     json_bytes = json.dumps(request).encode('utf-8')
                     protocol.send_msg(sock, json_bytes) # Send the message
+
             except queue.Empty:
                 pass # No more messages to send
 
@@ -436,6 +439,11 @@ def lobby_network_thread(host: str, port: int):
                         with g_state_lock:
                             g_client_state = "LOBBY" # Go back to lobby
                             g_error_message = "Failed to connect to game."
+
+                elif msg_type == "gamelog_response":
+                    logging.info(f"Received gamelog_response: {msg}")
+                    logs = msg.get("logs", [])
+                    update_records(logs, g_username)
 
                 elif msg.get("status") == "ok":
                     reason = msg.get('reason')
@@ -758,9 +766,28 @@ def draw_lobby_screen(screen, fonts, ui_elements):
         if is_inviteable:
             ui_elements["users_list"].append(btn)
 
-def draw_records_screen(screen, fonts):
-    draw_text(screen, "Records", 50, 20, fonts["LARGE"], CONFIG["COLORS"]["TEXT"])
-    draw_text(screen, "Esc to exit", CONFIG["SCREEN"]["WIDTH"] - 120, 20, fonts["TINY"], CONFIG["COLORS"]["TEXT"])
+def update_records(logs, username):
+    """Processes the raw logs and updates the records_screen state."""
+    processed_records = []
+    for log in logs:
+        user_result = None
+        opponent_result = None
+        for result in log["results"]:
+            if result["userId"] == username:
+                user_result = result
+            else:
+                opponent_result = result
+        
+        if user_result:
+            processed_records.append({
+                "date": log["start_time"].split("T")[0],
+                "score": user_result["score"],
+                "lines": user_result["lines"],
+                "winner": log["winner"],
+                "opponent": opponent_result["userId"] if opponent_result else "N/A",
+            })
+    
+    records_screen.records_state["records"] = processed_records
 
 def draw_room_screen(screen, fonts, ui_elements):
     #draw_text(screen, "Esc to exit", CONFIG["SCREEN"]["WIDTH"] - 120, 20, None, 18, CONFIG["COLORS"]["TEXT"])
@@ -1101,6 +1128,9 @@ def main():
                     if ui_elements["records_btn"].handle_event(event):
                         with g_state_lock:
                             g_client_state = "RECORDS"
+                        records_screen.on_enter(g_username)
+                        # logging.info("Called 'on_enter'")
+
 
                     for room_btn in ui_elements["rooms_list"]:
                         if room_btn.handle_event(event):
@@ -1117,9 +1147,9 @@ def main():
                             })
                 
                 elif current_client_state == "RECORDS":
-                    if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
-                        with g_state_lock:
-                            g_client_state = "LOBBY"
+                    g_client_state = records_screen.handle_records_events(event, g_state_lock, g_client_state, g_username)
+                    # logging.info("Current state: 'RECORDS'")
+
 
                 elif current_client_state == "IN_ROOM":
                     if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
@@ -1172,7 +1202,7 @@ def main():
         elif current_client_state == "LOBBY":
             draw_lobby_screen(screen, fonts, ui_elements)
         elif current_client_state == "RECORDS":
-            draw_records_screen(screen, fonts)
+            records_screen.draw_records_screen(screen, fonts)
         elif current_client_state == "IN_ROOM":
             draw_room_screen(screen, fonts, ui_elements)
         elif current_client_state == "GAME":

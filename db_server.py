@@ -153,6 +153,7 @@ def process_request(request_data: dict) -> dict:
                 return {"status": "ok"}
 
             elif action == "query": # Get game logs (e.g., for a user)
+                logging.info(f"Received query for GameLog with data: {data}")
                 # TODO: add more complex queries
                 user_id = data.get('userId')
                 if not user_id:
