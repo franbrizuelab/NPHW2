@@ -775,11 +775,17 @@ def update_records(logs, username):
                 opponent_result = result
         
         if user_result:
+            winner_username = log["winner"]
+            if winner_username == "P1":
+                winner_username = log["users"][0]
+            elif winner_username == "P2":
+                winner_username = log["users"][1]
+
             processed_records.append({
                 "date": log["start_time"].split("T")[0],
                 "score": user_result["score"],
                 "lines": user_result["lines"],
-                "winner": log["winner"],
+                "winner": winner_username,
                 "opponent": opponent_result["userId"] if opponent_result else "N/A",
             })
     
