@@ -16,6 +16,8 @@ import logging
 import queue
 import select
 import random
+import records_screen
+from shared import g_lobby_send_queue, send_to_lobby_queue
 
 # Add project root to path
 try:
@@ -205,7 +207,6 @@ g_error_message = None # For login errors
 # Sockets
 g_lobby_socket = None
 g_game_socket = None
-g_lobby_send_queue = queue.Queue()
 g_game_send_queue = queue.Queue() # Queue for game inputs
 
 # Lobby/Room State
@@ -221,10 +222,6 @@ g_user_acknowledged_game_over = False
 
 
 # Network Functions
-def send_to_lobby_queue(request: dict):
-    """Puts a request into the lobby send queue."""
-    g_lobby_send_queue.put(request)
-
 def send_input_to_server_queue(action: str):
     """Puts a game action into the game send queue."""
     g_game_send_queue.put({"type": "INPUT", "action": action})
@@ -276,8 +273,10 @@ def game_network_thread(sock: socket.socket):
             try:
                 while not g_game_send_queue.empty():
                     request = g_game_send_queue.get_nowait()
+                    logging.info(f"rq: {request}")
                     json_bytes = json.dumps(request).encode('utf-8')
                     protocol.send_msg(sock, json_bytes) # Send the message
+
             except queue.Empty:
                 pass # No more messages to send
 
@@ -436,6 +435,11 @@ def lobby_network_thread(host: str, port: int):
                         with g_state_lock:
                             g_client_state = "LOBBY" # Go back to lobby
                             g_error_message = "Failed to connect to game."
+
+                elif msg_type == "gamelog_response":
+                    logging.info(f"Received gamelog_response: {msg}")
+                    logs = msg.get("logs", [])
+                    update_records(logs, g_username)
 
                 elif msg.get("status") == "ok":
                     reason = msg.get('reason')
@@ -709,6 +713,7 @@ def draw_lobby_screen(screen, fonts, ui_elements):
     draw_text(screen, f"Lobby - Welcome {g_username}", 50, 20, fonts["LARGE"], CONFIG["COLORS"]["TEXT"])
     
     ui_elements["create_room_btn"].draw(screen)
+    ui_elements["records_btn"].draw(screen)
     
     draw_text(screen, "Rooms:", 50, 150, fonts["MEDIUM"], CONFIG["COLORS"]["TEXT"])
     draw_text(screen, "Users:", 450, 150, fonts["MEDIUM"], CONFIG["COLORS"]["TEXT"])
@@ -756,6 +761,35 @@ def draw_lobby_screen(screen, fonts, ui_elements):
         
         if is_inviteable:
             ui_elements["users_list"].append(btn)
+
+def update_records(logs, username):
+    """Processes the raw logs and updates the records_screen state."""
+    processed_records = []
+    for log in logs:
+        user_result = None
+        opponent_result = None
+        for result in log["results"]:
+            if result["userId"] == username:
+                user_result = result
+            else:
+                opponent_result = result
+        
+        if user_result:
+            winner_username = log["winner"]
+            if winner_username == "P1":
+                winner_username = log["users"][0]
+            elif winner_username == "P2":
+                winner_username = log["users"][1]
+
+            processed_records.append({
+                "date": log["start_time"].split("T")[0],
+                "score": user_result["score"],
+                "lines": user_result["lines"],
+                "winner": winner_username,
+                "opponent": opponent_result["userId"] if opponent_result else "N/A",
+            })
+    
+    records_screen.records_state["records"] = processed_records
 
 def draw_room_screen(screen, fonts, ui_elements):
     #draw_text(screen, "Esc to exit", CONFIG["SCREEN"]["WIDTH"] - 120, 20, None, 18, CONFIG["COLORS"]["TEXT"])
@@ -957,6 +991,7 @@ def main():
         "login_btn": Button(form_center_x - 150, 340, 140, 40, fonts["SMALL"], "Login"),
         "reg_btn": Button(form_center_x + 10, 340, 140, 40, fonts["SMALL"], "Register"),
         "create_room_btn": Button(50, 70, 200, 50, fonts["SMALL"], "Create Room"),
+        "records_btn": Button(260, 70, 200, 50, fonts["SMALL"], "Records"),
         "start_game_btn": Button(50, 400, 200, 50, fonts["SMALL"], "START GAME"),
         "rooms_list": [],
         "users_list": [],
@@ -1092,6 +1127,14 @@ def main():
                         with g_state_lock:
                             g_client_state = "IN_ROOM" # Optimistesic state change
                     
+                    if ui_elements["records_btn"].handle_event(event):
+                        with g_state_lock:
+                            g_client_state = "RECORDS"
+                        records_screen.on_enter(g_username)
+                        # logging.info("Called 'on_enter'")
+
+
+
                     for room_btn in ui_elements["rooms_list"]:
                         if room_btn.handle_event(event):
                             send_to_lobby_queue({"action": "join_room", "data": {"room_id": room_btn.room_id}})
@@ -1106,6 +1149,11 @@ def main():
                                 "data": {"target_user": user_btn.username}
                             })
                 
+                elif current_client_state == "RECORDS":
+                    g_client_state = records_screen.handle_records_events(event, g_state_lock, g_client_state, g_username)
+                    # logging.info("Current state: 'RECORDS'")
+
+
                 elif current_client_state == "IN_ROOM":
                     if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                         send_to_lobby_queue({"action": "leave_room"})
@@ -1156,6 +1204,8 @@ def main():
             draw_login_screen(screen, fonts, ui_elements, blink_on)
         elif current_client_state == "LOBBY":
             draw_lobby_screen(screen, fonts, ui_elements)
+        elif current_client_state == "RECORDS":
+            records_screen.draw_records_screen(screen, fonts)
         elif current_client_state == "IN_ROOM":
             draw_room_screen(screen, fonts, ui_elements)
         elif current_client_state == "GAME":
