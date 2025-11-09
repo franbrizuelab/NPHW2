@@ -17,6 +17,7 @@ import queue
 import select
 import random
 import records_screen
+from shared import g_lobby_send_queue, send_to_lobby_queue
 
 # Add project root to path
 try:
@@ -206,7 +207,6 @@ g_error_message = None # For login errors
 # Sockets
 g_lobby_socket = None
 g_game_socket = None
-g_lobby_send_queue = queue.Queue()
 g_game_send_queue = queue.Queue() # Queue for game inputs
 
 # Lobby/Room State
@@ -222,10 +222,6 @@ g_user_acknowledged_game_over = False
 
 
 # Network Functions
-def send_to_lobby_queue(request: dict):
-    """Puts a request into the lobby send queue."""
-    g_lobby_send_queue.put(request)
-
 def send_input_to_server_queue(action: str):
     """Puts a game action into the game send queue."""
     g_game_send_queue.put({"type": "INPUT", "action": action})
@@ -1130,6 +1126,7 @@ def main():
                             g_client_state = "RECORDS"
                         records_screen.on_enter(g_username)
                         # logging.info("Called 'on_enter'")
+
 
 
                     for room_btn in ui_elements["rooms_list"]:

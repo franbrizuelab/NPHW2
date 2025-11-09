@@ -1,6 +1,7 @@
 import pygame
 from common import config
-from client_gui import CONFIG, Button, send_to_lobby_queue
+from shared import send_to_lobby_queue
+from client_gui import CONFIG, Button
 
 records_state = {
     "view": "user",  # "user" or "global"
