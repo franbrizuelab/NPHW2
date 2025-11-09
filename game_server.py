@@ -14,6 +14,7 @@ import random
 import queue
 import logging
 import argparse
+from datetime import datetime
 
 # Add project root to path
 try:
@@ -118,7 +119,7 @@ def process_input(game: TetrisGame, action: str):
 
 # UPDATE SIGNATURE
 # rrrrr
-def handle_game_end(clients: list, game_p1: TetrisGame, game_p2: TetrisGame, winner: str, reason: str, loser_username: str, p1_user: str, p2_user: str, room_id: int):
+def handle_game_end(clients: list, game_p1: TetrisGame, game_p2: TetrisGame, winner: str, reason: str, loser_username: str, p1_user: str, p2_user: str, room_id: int, start_time: float):
     """
     Handles all end-of-game logic:
     1. Builds the GameLog.
@@ -127,6 +128,7 @@ def handle_game_end(clients: list, game_p1: TetrisGame, game_p2: TetrisGame, win
     4. Notifies the lobby server that the game is over.
     """
     logging.info(f"Game loop finished. Winner: {winner}, Reason: {reason}")
+    end_time = datetime.now()
     
     # 1. Build GameLog
     p1_results = {"userId": p1_user, "score": game_p1.score, "lines": game_p1.lines_cleared}
@@ -137,7 +139,9 @@ def handle_game_end(clients: list, game_p1: TetrisGame, game_p2: TetrisGame, win
         "users": [p1_user, p2_user], # Use real usernames
         "results": [p1_results, p2_results],
         "winner": winner,
-        "reason": reason
+        "reason": reason,
+        "start_time": datetime.fromtimestamp(start_time).isoformat(),
+        "end_time": end_time.isoformat()
     }
 
     # 2. Report to DB
@@ -269,7 +273,7 @@ def game_loop(clients: list, input_queue: queue.Queue, game_p1: TetrisGame, game
     game_p1.game_over = True
     game_p2.game_over = True
 
-    handle_game_end(clients, game_p1, game_p2, winner, reason, loser_username, p1_user, p2_user, room_id)
+    handle_game_end(clients, game_p1, game_p2, winner, reason, loser_username, p1_user, p2_user, room_id, start_time)
 
 def forward_to_db(request: dict) -> dict | None:
     """Acts as a client to the DB_Server."""
